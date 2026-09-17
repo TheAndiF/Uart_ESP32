@@ -1,4 +1,5 @@
 #include "OtaManager.h"
+#include "ConfigDefaults.h"
 
 #include <HTTPClient.h>
 #include <HTTPUpdate.h>
@@ -27,12 +28,12 @@ void OtaManager::loadSettings()
   if (!_prefs) return;
 
   _prefs->begin("netconf", true);
-  _arduinoOtaEnabled   = _prefs->getBool("ota_enabled", false);
-  _arduinoOtaPassword  = _prefs->getString("ota_pw", "ota123");
-  _pullUpdateEnabled   = _prefs->getBool("pull_enabled", false);
-  _pullAutoCheckEnabled = _prefs->getBool("pull_auto", false);
-  _versionInfoUrl      = _prefs->getString("pull_url", "");
-  _currentVersion      = _prefs->getString("fw_version", "1.0.0");
+  _arduinoOtaEnabled = _prefs->isKey("ota_enabled") ? _prefs->getBool("ota_enabled", UART_OTA_ENABLED) : UART_OTA_ENABLED;
+  _arduinoOtaPassword = _prefs->isKey("ota_pw") ? _prefs->getString("ota_pw", UART_OTA_PASSWORD) : String(UART_OTA_PASSWORD);
+  _pullUpdateEnabled = _prefs->isKey("pull_enabled") ? _prefs->getBool("pull_enabled", UART_PULL_OTA_ENABLED) : UART_PULL_OTA_ENABLED;
+  _pullAutoCheckEnabled = _prefs->isKey("pull_auto") ? _prefs->getBool("pull_auto", UART_PULL_OTA_AUTO_CHECK) : UART_PULL_OTA_AUTO_CHECK;
+  _versionInfoUrl = _prefs->isKey("pull_url") ? _prefs->getString("pull_url", UART_PULL_OTA_URL) : String(UART_PULL_OTA_URL);
+  _currentVersion = _prefs->isKey("fw_version") ? _prefs->getString("fw_version", UART_FW_VERSION) : String(UART_FW_VERSION);
   _prefs->end();
 }
 

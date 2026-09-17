@@ -1,4 +1,5 @@
 #include "BatteryMonitor.h"
+#include "ConfigDefaults.h"
 #include <time.h>
 
 static String currentTimeText() {
@@ -19,12 +20,12 @@ bool BatteryMonitor::isValidAdc1Pin() const {
 void BatteryMonitor::load() {
   Preferences p;
   if (!p.begin("netconf", true)) return;
-  enabled = p.getBool("bat_enabled", true);
-  adcPin = (uint8_t)p.getUInt("bat_adc_pin", 34);
-  r1 = p.getFloat("bat_div_r1", 100000.0f);
-  r2 = p.getFloat("bat_div_r2", 33000.0f);
-  calibration = p.getFloat("bat_adc_cal", 1.0f);
-  samples = (uint16_t)p.getUInt("bat_samples", 20);
+  enabled = p.isKey("bat_enabled") ? p.getBool("bat_enabled", UART_BATTERY_ENABLED) : UART_BATTERY_ENABLED;
+  adcPin = (uint8_t)(p.isKey("bat_adc_pin") ? p.getUInt("bat_adc_pin", UART_BATTERY_ADC_PIN) : UART_BATTERY_ADC_PIN);
+  r1 = p.isKey("bat_div_r1") ? p.getFloat("bat_div_r1", UART_BATTERY_R1) : UART_BATTERY_R1;
+  r2 = p.isKey("bat_div_r2") ? p.getFloat("bat_div_r2", UART_BATTERY_R2) : UART_BATTERY_R2;
+  calibration = p.isKey("bat_adc_cal") ? p.getFloat("bat_adc_cal", UART_BATTERY_CAL) : UART_BATTERY_CAL;
+  samples = (uint16_t)(p.isKey("bat_samples") ? p.getUInt("bat_samples", UART_BATTERY_SAMPLES) : UART_BATTERY_SAMPLES);
   p.end();
 
   if (r1 < 1) r1 = 100000.0f;

@@ -1,4 +1,5 @@
 #include "DeepSleepManager.h"
+#include "ConfigDefaults.h"
 #include <Preferences.h>
 #include <time.h>
 #include <math.h>
@@ -12,29 +13,29 @@ void DeepSleepManager::begin() {
 void DeepSleepManager::load() {
   Preferences p;
   if (!p.begin("netconf", true)) return;
-  _enabled = p.getBool("sleep_enabled", false);
-  _sleepIntervalMin = p.getUInt("sleep_int_min", 15);
-  _awakeSeconds = p.getUInt("sleep_awake_s", 300);
-  _minOnlineSeconds = p.getUInt("sleep_min_on_s", 60);
-  _otaWindowSeconds = p.getUInt("sleep_ota_win", 300);
-  _mqttOkOnly = p.getBool("sleep_mqtt_ok", true);
-  _mqttTimeoutSeconds = p.getUInt("sleep_mqtt_to", 120);
-  _nightEnabled = p.getBool("sleep_night_en", false);
-  _nightStartHour = (uint8_t)p.getUInt("sleep_night_st", 22);
-  _nightEndHour = (uint8_t)p.getUInt("sleep_night_end", 6);
-  _nightIntervalMin = p.getUInt("sleep_night_int", 60);
-  _wakeupMode = p.getString("sleep_wake_mode", "interval");
-  _wakeupOffsetMin = (uint8_t)p.getUInt("sleep_wake_off", 0);
-  _fixedWakeTimes = p.getString("sleep_fixed", "06:00,12:00,18:00");
-  _fallbackIntervalMin = p.getUInt("sleep_fallback", 15);
-  _wakeOnceEnabled = p.getBool("sleep_once_en", false);
-  _wakeOnceEpoch = p.getUInt("sleep_once_ep", 0);
-  _wakeOnceText = p.getString("sleep_once_txt", "");
-  _batteryAdaptive = p.getBool("sleep_bat_ad", false);
-  _lowVoltageV = p.getFloat("sleep_low_v", 3.50f);
-  _lowIntervalMin = p.getUInt("sleep_low_int", 60);
-  _criticalVoltageV = p.getFloat("sleep_crit_v", 3.30f);
-  _criticalIntervalMin = p.getUInt("sleep_crit_int", 180);
+  _enabled = p.isKey("sleep_enabled") ? p.getBool("sleep_enabled", UART_SLEEP_ENABLED) : UART_SLEEP_ENABLED;
+  _sleepIntervalMin = p.isKey("sleep_int_min") ? p.getUInt("sleep_int_min", UART_SLEEP_INTERVAL_MIN) : UART_SLEEP_INTERVAL_MIN;
+  _awakeSeconds = p.isKey("sleep_awake_s") ? p.getUInt("sleep_awake_s", UART_SLEEP_AWAKE_S) : UART_SLEEP_AWAKE_S;
+  _minOnlineSeconds = p.isKey("sleep_min_on_s") ? p.getUInt("sleep_min_on_s", UART_SLEEP_MIN_ONLINE_S) : UART_SLEEP_MIN_ONLINE_S;
+  _otaWindowSeconds = p.isKey("sleep_ota_win") ? p.getUInt("sleep_ota_win", UART_SLEEP_OTA_WINDOW_S) : UART_SLEEP_OTA_WINDOW_S;
+  _mqttOkOnly = p.isKey("sleep_mqtt_ok") ? p.getBool("sleep_mqtt_ok", UART_SLEEP_MQTT_OK_ONLY) : UART_SLEEP_MQTT_OK_ONLY;
+  _mqttTimeoutSeconds = p.isKey("sleep_mqtt_to") ? p.getUInt("sleep_mqtt_to", UART_SLEEP_MQTT_TIMEOUT_S) : UART_SLEEP_MQTT_TIMEOUT_S;
+  _nightEnabled = p.isKey("sleep_night_en") ? p.getBool("sleep_night_en", UART_SLEEP_NIGHT_ENABLED) : UART_SLEEP_NIGHT_ENABLED;
+  _nightStartHour = (uint8_t)(p.isKey("sleep_night_st") ? p.getUInt("sleep_night_st", UART_SLEEP_NIGHT_START_H) : UART_SLEEP_NIGHT_START_H);
+  _nightEndHour = (uint8_t)(p.isKey("sleep_night_end") ? p.getUInt("sleep_night_end", UART_SLEEP_NIGHT_END_H) : UART_SLEEP_NIGHT_END_H);
+  _nightIntervalMin = p.isKey("sleep_night_int") ? p.getUInt("sleep_night_int", UART_SLEEP_NIGHT_INTERVAL_MIN) : UART_SLEEP_NIGHT_INTERVAL_MIN;
+  _wakeupMode = p.isKey("sleep_wake_mode") ? p.getString("sleep_wake_mode", UART_SLEEP_WAKE_MODE) : String(UART_SLEEP_WAKE_MODE);
+  _wakeupOffsetMin = (uint8_t)(p.isKey("sleep_wake_off") ? p.getUInt("sleep_wake_off", UART_SLEEP_WAKE_OFFSET_MIN) : UART_SLEEP_WAKE_OFFSET_MIN);
+  _fixedWakeTimes = p.isKey("sleep_fixed") ? p.getString("sleep_fixed", UART_SLEEP_FIXED_TIMES) : String(UART_SLEEP_FIXED_TIMES);
+  _fallbackIntervalMin = p.isKey("sleep_fallback") ? p.getUInt("sleep_fallback", UART_SLEEP_FALLBACK_MIN) : UART_SLEEP_FALLBACK_MIN;
+  _wakeOnceEnabled = p.isKey("sleep_once_en") ? p.getBool("sleep_once_en", false) : false;
+  _wakeOnceEpoch = p.isKey("sleep_once_ep") ? p.getUInt("sleep_once_ep", 0) : 0;
+  _wakeOnceText = p.isKey("sleep_once_txt") ? p.getString("sleep_once_txt", "") : String();
+  _batteryAdaptive = p.isKey("sleep_bat_ad") ? p.getBool("sleep_bat_ad", UART_SLEEP_BATTERY_ADAPTIVE) : UART_SLEEP_BATTERY_ADAPTIVE;
+  _lowVoltageV = p.isKey("sleep_low_v") ? p.getFloat("sleep_low_v", UART_SLEEP_LOW_V) : UART_SLEEP_LOW_V;
+  _lowIntervalMin = p.isKey("sleep_low_int") ? p.getUInt("sleep_low_int", UART_SLEEP_LOW_INTERVAL_MIN) : UART_SLEEP_LOW_INTERVAL_MIN;
+  _criticalVoltageV = p.isKey("sleep_crit_v") ? p.getFloat("sleep_crit_v", UART_SLEEP_CRITICAL_V) : UART_SLEEP_CRITICAL_V;
+  _criticalIntervalMin = p.isKey("sleep_crit_int") ? p.getUInt("sleep_crit_int", UART_SLEEP_CRITICAL_INTERVAL_MIN) : UART_SLEEP_CRITICAL_INTERVAL_MIN;
   p.end();
   validate();
 }

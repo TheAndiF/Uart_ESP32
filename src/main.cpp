@@ -8,6 +8,7 @@
 #include "DeepSleepManager.h"
 #include "OtaManager.h"
 #include "BatteryMonitor.h"
+#include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
 static const char* FW_VERSION_DEFAULT = "1.0.0";
@@ -29,6 +30,7 @@ uint16_t mqttPort = 1883;
 uint32_t heartbeatMs = 60000UL;
 
 bool apActive = false;
+bool wifiLoadedFromNvs = false;
 bool otaStarted = false;
 unsigned long lastWifiTry = 0;
 unsigned long lastMqttTry = 0;
@@ -71,35 +73,56 @@ static String pageHead(const String& title) {
   return h;
 }
 
+static String prefString(Preferences& p, const char* key, const char* fallback) {
+  return p.isKey(key) ? p.getString(key, fallback) : String(fallback);
+}
+
+static bool prefBool(Preferences& p, const char* key, bool fallback) {
+  return p.isKey(key) ? p.getBool(key, fallback) : fallback;
+}
+
+static uint32_t prefUInt(Preferences& p, const char* key, uint32_t fallback) {
+  return p.isKey(key) ? p.getUInt(key, fallback) : fallback;
+}
+
 static void loadSettings() {
   Preferences p;
   p.begin("netconf", true);
-  wifiSsid = p.getString("ssid", "");
-  wifiPassword = p.getString("wifipw", "");
-  staticIp = p.getString("static_ip", "");
-  gatewayIp = p.getString("gateway", "192.168.1.1");
-  subnetMask = p.getString("subnet", "255.255.255.0");
-  apSsid = p.getString("ap_ssid", "Uart_Esp32-Setup");
-  apPassword = p.getString("ap_pw", "");
-  hostname = p.getString("hostname", "uart-esp32");
-  ntpServer = p.getString("ntp_server", "pool.ntp.org");
 
-  mqttEnabled = p.getBool("mqtt_enabled", false);
-  mqttHost = p.getString("mqtt_host", "");
-  mqttPort = (uint16_t)p.getUInt("mqtt_port", 1883);
-  mqttUser = p.getString("mqtt_user", "");
-  mqttPassword = p.getString("mqtt_pw", "");
-  mqttTopicBase = p.getString("mqtt_topic", "");
-  mqttClientId = p.getString("mqtt_client_id", "");
-  heartbeatMs = p.getULong("mqtt_hb_ms", 60000UL);
+  // NVS has priority after the user has saved settings in the web UI.
+  // On a fresh device the defaults come from optional arduino_secrets.h.
+  wifiLoadedFromNvs = p.isKey("ssid");
+  wifiSsid = prefString(p, "ssid", UART_WIFI_SSID);
+  wifiPassword = prefString(p, "wifipw", UART_WIFI_PASSWORD);
+  staticIp = prefString(p, "static_ip", UART_STATIC_IP);
+  gatewayIp = prefString(p, "gateway", UART_GATEWAY_IP);
+  subnetMask = prefString(p, "subnet", UART_SUBNET_MASK);
+  apSsid = prefString(p, "ap_ssid", UART_AP_SSID);
+  apPassword = prefString(p, "ap_pw", UART_AP_PASSWORD);
+  hostname = prefString(p, "hostname", UART_HOSTNAME);
+  ntpServer = prefString(p, "ntp_server", UART_NTP_SERVER);
+
+  mqttEnabled = prefBool(p, "mqtt_enabled", UART_MQTT_ENABLED);
+  mqttHost = prefString(p, "mqtt_host", UART_MQTT_HOST);
+  mqttPort = (uint16_t)prefUInt(p, "mqtt_port", UART_MQTT_PORT);
+  mqttUser = prefString(p, "mqtt_user", UART_MQTT_USER);
+  mqttPassword = prefString(p, "mqtt_pw", UART_MQTT_PASSWORD);
+  mqttTopicBase = prefString(p, "mqtt_topic", UART_MQTT_TOPIC_BASE);
+  mqttClientId = prefString(p, "mqtt_client_id", UART_MQTT_CLIENT_ID);
+  heartbeatMs = prefUInt(p, "mqtt_hb_ms", UART_MQTT_HEARTBEAT_MS);
   p.end();
 
-  if (hostname.length() == 0) hostname = "uart-esp32";
-  if (apSsid.length() == 0) apSsid = "Uart_Esp32-Setup";
+  if (hostname.length() == 0) hostname = UART_HOSTNAME;
+  if (apSsid.length() == 0) apSsid = UART_AP_SSID;
   if (mqttTopicBase.length() == 0) mqttTopicBase = defaultIdentity();
   if (mqttClientId.length() == 0) mqttClientId = mqttTopicBase;
   if (mqttPort == 0) mqttPort = 1883;
   if (heartbeatMs < 1000) heartbeatMs = 1000;
+
+  Serial.printf("[CONFIG] arduino_secrets.h: %s\n", UART_ESP32_HAS_SECRETS ? "vorhanden" : "nicht vorhanden - sichere Defaults aktiv");
+  if (wifiLoadedFromNvs) Serial.println("[CONFIG] WLAN-Quelle: NVS");
+  else if (wifiSsid.length()) Serial.println("[CONFIG] WLAN-Quelle: arduino_secrets.h / Compile-Default");
+  else Serial.println("[CONFIG] Keine WLAN-Zugangsdaten - AP-Modus wird gestartet");
 }
 
 static void saveNetworkSettings() {
@@ -125,6 +148,8 @@ static void startFallbackAp() {
   if (apPassword.length() >= 8) WiFi.softAP(apSsid.c_str(), apPassword.c_str());
   else WiFi.softAP(apSsid.c_str());
   apActive = true;
+  WiFi.scanDelete();
+  WiFi.scanNetworks(true, true);
   Serial.printf("[WIFI] Fallback AP: %s, IP %s\n", apSsid.c_str(), WiFi.softAPIP().toString().c_str());
 }
 
@@ -269,11 +294,36 @@ static String mainPage() {
 }
 
 static String networkPage() {
-  String h = pageHead("WLAN / NTP"); h += "<h1>WLAN / NTP</h1><form method='post' action='/save_network'><fieldset><legend>WLAN Client</legend>";
-  h += "<label>SSID</label><input name='ssid' value='"+htmlEscape(wifiSsid)+"'><label>Passwort</label><input type='password' name='wifipw' placeholder='leer = unveraendert'>";
+  String h = pageHead("WLAN / NTP");
+  h += "<h1>WLAN / NTP</h1>";
+  h += "<p class='small'>Prioritaet beim Start: gespeicherte NVS-Werte &gt; arduino_secrets.h &gt; Fallback-AP. Ein hier ausgewaehltes WLAN wird dauerhaft in NVS gespeichert.</p>";
+
+  int scanState = WiFi.scanComplete();
+  if (scanState == WIFI_SCAN_FAILED) {
+    WiFi.scanNetworks(true, true);
+    scanState = WIFI_SCAN_RUNNING;
+  }
+
+  h += "<form method='post' action='/save_network'><fieldset><legend>WLAN Client</legend>";
+  h += "<label>Gefundene WLANs</label><select name='ssid_scan' onchange=\"if(this.value){document.getElementById('ssid_manual').value=this.value;}\"><option value=''>-- manuelle SSID verwenden --</option>";
+  if (scanState >= 0) {
+    for (int i = 0; i < scanState; ++i) {
+      String ssid = WiFi.SSID(i);
+      if (!ssid.length()) continue;
+      h += "<option value='" + htmlEscape(ssid) + "'>" + htmlEscape(ssid) + " (" + String(WiFi.RSSI(i)) + " dBm";
+      h += WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? ", offen" : ", geschuetzt";
+      h += ")</option>";
+    }
+  }
+  h += "</select>";
+  if (scanState == WIFI_SCAN_RUNNING) h += "<p class='small'>WLAN-Scan laeuft. Seite in wenigen Sekunden neu laden.</p>";
+  else h += "<p class='small'><a href='/wifi_rescan'>WLANs neu scannen</a></p>";
+
+  h += "<label>SSID</label><input id='ssid_manual' name='ssid' value='"+htmlEscape(wifiSsid)+"'>";
+  h += "<label>Passwort</label><input type='password' name='wifipw' placeholder='leer = bei gleicher SSID unveraendert'>";
   h += "<label>Statische IP (leer = DHCP)</label><input name='static_ip' value='"+htmlEscape(staticIp)+"'><label>Gateway</label><input name='gateway' value='"+htmlEscape(gatewayIp)+"'><label>Subnetz</label><input name='subnet' value='"+htmlEscape(subnetMask)+"'></fieldset>";
   h += "<fieldset><legend>Fallback Access Point</legend><label>AP SSID</label><input name='ap_ssid' value='"+htmlEscape(apSsid)+"'><label>AP Passwort (leer = offen, sonst min. 8 Zeichen)</label><input type='password' name='ap_pw' placeholder='leer = unveraendert'></fieldset>";
-  h += "<fieldset><legend>System</legend><label>Hostname</label><input name='hostname' value='"+htmlEscape(hostname)+"'><label>NTP Server</label><input name='ntp_server' value='"+htmlEscape(ntpServer)+"'><p class='small'>Zeitzone: Deutschland (CET/CEST), Sommer-/Winterzeit automatisch.</p></fieldset><button type='submit'>Speichern und neu starten</button></form><a class='btn' href='/'>Zurueck</a></div></body></html>";
+  h += "<fieldset><legend>System</legend><label>Hostname</label><input name='hostname' value='"+htmlEscape(hostname)+"'><label>NTP Server</label><input name='ntp_server' value='"+htmlEscape(ntpServer)+"'><p class='small'>Zeitzone: Deutschland (CET/CEST), Sommer-/Winterzeit automatisch.</p></fieldset><button type='submit'>In NVS speichern und neu starten</button></form><a class='btn' href='/'>Zurueck</a></div></body></html>";
   return h;
 }
 
@@ -297,9 +347,15 @@ static String batteryPage() {
 static void registerRoutes() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",mainPage()); });
   server.on("/network", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",networkPage()); });
+  server.on("/wifi_rescan", HTTP_GET, [](AsyncWebServerRequest* r){ WiFi.scanDelete(); WiFi.scanNetworks(true, true); r->redirect("/network"); });
   server.on("/save_network", HTTP_POST, [](AsyncWebServerRequest* r){
-    if (r->hasArg("ssid")) wifiSsid=r->arg("ssid");
+    String oldSsid = wifiSsid;
+    String selectedSsid = r->hasArg("ssid_scan") ? r->arg("ssid_scan") : String();
+    selectedSsid.trim();
+    if (selectedSsid.length()) wifiSsid = selectedSsid;
+    else if (r->hasArg("ssid")) { wifiSsid = r->arg("ssid"); wifiSsid.trim(); }
     if (r->hasArg("wifipw") && r->arg("wifipw").length()) wifiPassword=r->arg("wifipw");
+    else if (wifiSsid != oldSsid) wifiPassword = "";
     if (r->hasArg("static_ip")) staticIp=r->arg("static_ip"); if (r->hasArg("gateway")) gatewayIp=r->arg("gateway"); if (r->hasArg("subnet")) subnetMask=r->arg("subnet");
     if (r->hasArg("ap_ssid")) apSsid=r->arg("ap_ssid"); if (r->hasArg("ap_pw") && r->arg("ap_pw").length()) apPassword=r->arg("ap_pw");
     if (r->hasArg("hostname")) hostname=r->arg("hostname"); if (r->hasArg("ntp_server")) ntpServer=r->arg("ntp_server");

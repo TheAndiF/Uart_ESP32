@@ -2,9 +2,17 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Build-Hinweis v0.3
+## Stand v0.4
 
-Der mit PlatformIO/Espressif32 6.7.0 gemeldete Compilerfehler bei `max(...)` wurde behoben. Ursache waren gemischte Integer-Typen (`uint32_t`, `unsigned long`, `long`, `int`) bei Template-Aufrufen. Die betroffenen Vergleiche sind jetzt explizit typisiert bzw. ohne `max()`/`min()` formuliert.
+Konfigurationswerte werden jetzt in dieser Reihenfolge geladen:
+
+1. bereits in NVS gespeicherte Werte,
+2. Werte aus der optionalen lokalen Datei `include/arduino_secrets.h`,
+3. sichere interne Defaults.
+
+Fehlende NVS-Keys werden vor dem Lesen mit `Preferences::isKey()` geprüft. Dadurch erzeugt ein frischer ESP32 keine `NOT_FOUND`-Fehlermeldungen mehr für noch nicht gespeicherte Strings oder Float-Werte.
+
+Für WLAN gilt zusätzlich: Sind weder NVS-Zugangsdaten noch eine SSID aus `arduino_secrets.h` vorhanden, startet der ESP32 sofort den Fallback-AP. Im Webinterface können verfügbare WLANs gescannt und ausgewählt werden. Nach dem Speichern werden SSID und Passwort in NVS abgelegt und beim nächsten Start bevorzugt verwendet.
 
 Das Projekt enthält nur die Infrastruktur-Funktionen aus der gewünschten Auswahl:
 
@@ -58,15 +66,36 @@ upload_protocol = espota
 
 `upload_port` und `--auth` in `platformio.ini` müssen dann zu deinem Gerät passen.
 
-## Erster Start
+## Konfiguration / arduino_secrets.h
 
-Auf einem frischen ESP32 sind noch keine WLAN-Zugangsdaten gespeichert. Deshalb startet der Fallback-AP:
+Die Datei `include/arduino_secrets.h` ist optional und wird absichtlich nicht mit Git versioniert. Als Vorlage liegt `include/arduino_secrets.example.h` im Projekt.
+
+Beispiel:
+
+```cpp
+#pragma once
+#define UART_WIFI_SSID       "MeinWLAN"
+#define UART_WIFI_PASSWORD   "MeinPasswort"
+#define UART_MQTT_ENABLED    true
+#define UART_MQTT_HOST       "192.168.1.10"
+#define UART_MQTT_USER       "mqtt"
+#define UART_MQTT_PASSWORD   "geheim"
+#define UART_OTA_PASSWORD    "geheim"
+```
+
+Die üblichen Arduino-Namen `SECRET_SSID` und `SECRET_PASS` werden ebenfalls als WLAN-Aliase akzeptiert. Alle Defines sind optional. Fehlt die Datei oder ein einzelner Wert, verwendet die Firmware sichere Defaults. Zugangsdaten-Dummies sind standardmäßig leer, damit nicht versehentlich eine Verbindung mit Platzhalterwerten versucht wird.
+
+Die Start-Priorität ist **NVS > arduino_secrets.h > interne Defaults**. Damit bleiben WLAN-Daten, die später über das Webinterface gewählt wurden, nach Neustarts erhalten.
+
+## Erster Start / WLAN-Provisionierung
+
+Sind keine WLAN-Zugangsdaten in NVS und keine SSID in `arduino_secrets.h` vorhanden, startet sofort der Fallback-AP:
 
 - SSID: `Uart_Esp32-Setup`
 - IP: `192.168.4.1`
 - Passwort: keines (offener AP)
 
-Im Browser `http://192.168.4.1/` öffnen und unter **WLAN / NTP** die WLAN-Daten eintragen.
+Im Browser `http://192.168.4.1/` öffnen und **WLAN / NTP** wählen. Dort werden gefundene WLANs in einer Auswahlliste angezeigt. Gewähltes WLAN und Passwort werden beim Speichern in NVS geschrieben; danach startet der ESP32 neu und verbindet sich als WLAN-Client.
 
 Eine leere statische IP bedeutet DHCP.
 
@@ -95,7 +124,8 @@ Vor dem Anschließen bitte sicherstellen, dass die maximale Spannung am ADC-Pin 
 | Route | Funktion |
 |---|---|
 | `/` | Hauptstatus |
-| `/network` | WLAN, AP, Hostname, NTP |
+| `/network` | WLAN-Scan/Auswahl, AP, Hostname, NTP |
+| `/wifi_rescan` | WLAN-Scan neu starten |
 | `/mqtt` | MQTT-Einstellungen / Verbindungstest |
 | `/battery` | ADC-Batteriemessung für Deep Sleep |
 | `/deepsleep` | Deep-Sleep-Konfiguration |
