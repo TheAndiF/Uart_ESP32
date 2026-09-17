@@ -1,10 +1,56 @@
-# Uart_Esp32 - WROOM32 Infrastructure
+# Uart_Esp32 - Projektdokumentation - Firmware
+
+**Projektname:** Uart_Esp32  
+**Dokumentenart:** Projektdokumentation  
+**Thema:** Firmware für ESP32-WROOM-32 / NodeMCU-32S  
+**Erstellungsdatum:** 2026-09-17  
+**Autor / verantwortliche Person:** OpenAI ChatGPT (technische Erstellung)  
+**Version:** v0.2  
+**Status:** Entwurf  
+**Änderungsdatum:** 2026-09-17  
+**Ablageort:** Projektordner `Uart_Esp32/docs`  
+**Referenzen:** `Regeln_Projektdokumentation_PDF_DOCX_Pflicht_(5).pdf`; vorheriger Projektstand `Wasser_ESP32_WROOM32_Lite`  
+
+## Änderungshistorie
+
+| Version | Datum | Bearbeiter | Status | Änderung |
+|---|---|---|---|---|
+| v0.1 | 2026-09-17 | OpenAI ChatGPT | Entwurf | Reduzierter WROOM32-Projektstand erstellt |
+| v0.2 | 2026-09-17 | OpenAI ChatGPT | Entwurf | Projekt in Uart_Esp32 umbenannt und Dokumentationsregeln umgesetzt |
+
+
+## Dokumentations- und Auslieferungsregeln
+
+Diese Auslieferung orientiert sich an `Regeln_Projektdokumentation_PDF_DOCX_Pflicht_(5).pdf` (Stand 2026-06-18). Für die Projektdokumentation werden PDF und DOCX mit identischem Inhalt und identischem Versionsstand bereitgestellt. Dokumenttitel und Dokumentdateinamen enthalten den Projektnamen, die Dokumentenart, das Thema und die Version; die Kennzeichnungsblöcke sind mit ` - ` getrennt.
+
+Für das Codepaket werden eine vollständige ZIP-Datei, eine ZIP-Datei nur mit geänderten bzw. neu benötigten Dateien in korrekter Projektstruktur und eine englische Commit-Nachricht mit Datum, BL_-Titel, Zusammenfassung und Dateiliste bereitgestellt.
+
+**Bewusste Abweichung aufgrund des Auftrags:** Die Dokumentationsregel fuer normale Codeänderungen sieht vor, den bestehenden Root-Ordner eines ZIP-Pakets nicht umzubenennen. In diesem Auftrag ist die Umbenennung des Projekts und des Projektverzeichnisses auf `Uart_Esp32` ausdrücklich gefordert. Deshalb wird der Root-Ordner einmalig auf `Uart_Esp32` umgestellt. Ab Version v0.2 ist `Uart_Esp32` der verbindliche Projekt-Root fuer weitere Änderungen.
+
+## Projektstruktur
+
+```text
+Uart_Esp32/
+  platformio.ini
+  src/
+    BatteryMonitor.cpp
+    BatteryMonitor.h
+    DeepSleepManager.cpp
+    DeepSleepManager.h
+    MqttManager.cpp
+    MqttManager.h
+    OtaManager.cpp
+    OtaManager.h
+    main.cpp
+  docs/
+    2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.2.md
+    2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.2.docx
+    2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.2.pdf
+    2026-09-17 - Uart_Esp32 - Commit-Nachricht - Projektumbenennung - v0.2.txt
+```
+
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
-
-## Build-Hinweis v0.3
-
-Der mit PlatformIO/Espressif32 6.7.0 gemeldete Compilerfehler bei `max(...)` wurde behoben. Ursache waren gemischte Integer-Typen (`uint32_t`, `unsigned long`, `long`, `int`) bei Template-Aufrufen. Die betroffenen Vergleiche sind jetzt explizit typisiert bzw. ohne `max()`/`min()` formuliert.
 
 Das Projekt enthält nur die Infrastruktur-Funktionen aus der gewünschten Auswahl:
 

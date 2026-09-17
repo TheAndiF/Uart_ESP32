@@ -1,10 +1,57 @@
-# Uart_Esp32 - WROOM32 Infrastructure
+# Uart_Esp32 - Projektdokumentation - Firmware
+
+**Projektname:** Uart_Esp32  
+**Dokumentenart:** Projektdokumentation  
+**Thema:** Firmware für ESP32-WROOM-32 / NodeMCU-32S  
+**Erstellungsdatum:** 2026-09-17  
+**Autor / verantwortliche Person:** OpenAI ChatGPT (technische Erstellung)  
+**Version:** v0.3  
+**Status:** Entwurf  
+**Änderungsdatum:** 2026-09-17  
+**Ablageort:** Projektordner `Uart_Esp32/docs`  
+**Referenzen:** `Regeln_Projektdokumentation_PDF_DOCX_Pflicht_(5).pdf`; vorheriger Projektstand `Wasser_ESP32_WROOM32_Lite`  
+
+## Änderungshistorie
+
+| Version | Datum | Bearbeiter | Status | Änderung |
+|---|---|---|---|---|
+| v0.1 | 2026-09-17 | OpenAI ChatGPT | Entwurf | Reduzierter WROOM32-Projektstand erstellt |
+| v0.2 | 2026-09-17 | OpenAI ChatGPT | Entwurf | Projekt in Uart_Esp32 umbenannt und Dokumentationsregeln umgesetzt |
+| v0.3 | 2026-09-17 | OpenAI ChatGPT | Entwurf | Buildfehler durch typensichere Integer-Vergleiche behoben; README bereinigt |
+
+
+## Dokumentations- und Auslieferungsregeln
+
+Diese Auslieferung orientiert sich an `Regeln_Projektdokumentation_PDF_DOCX_Pflicht_(5).pdf` (Stand 2026-06-18). Für die Projektdokumentation werden PDF und DOCX mit identischem Inhalt und identischem Versionsstand bereitgestellt. Dokumenttitel und Dokumentdateinamen enthalten den Projektnamen, die Dokumentenart, das Thema und die Version; die Kennzeichnungsblöcke sind mit ` - ` getrennt.
+
+Für das Codepaket werden eine vollständige ZIP-Datei, eine ZIP-Datei nur mit geänderten bzw. neu benötigten Dateien in korrekter Projektstruktur und eine englische Commit-Nachricht mit Datum, BL_-Titel, Zusammenfassung und Dateiliste bereitgestellt.
+
+**Bewusste Abweichung aufgrund des Auftrags:** Die Dokumentationsregel fuer normale Codeänderungen sieht vor, den bestehenden Root-Ordner eines ZIP-Pakets nicht umzubenennen. In diesem Auftrag ist die Umbenennung des Projekts und des Projektverzeichnisses auf `Uart_Esp32` ausdrücklich gefordert. Deshalb wird der Root-Ordner einmalig auf `Uart_Esp32` umgestellt. Ab Version v0.2 ist `Uart_Esp32` der verbindliche Projekt-Root fuer weitere Änderungen.
+
+## Projektstruktur
+
+```text
+Uart_Esp32/
+  platformio.ini
+  src/
+    BatteryMonitor.cpp
+    BatteryMonitor.h
+    DeepSleepManager.cpp
+    DeepSleepManager.h
+    MqttManager.cpp
+    MqttManager.h
+    OtaManager.cpp
+    OtaManager.h
+    main.cpp
+  docs/
+    2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.3.md
+    2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.3.docx
+    2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.3.pdf
+    2026-09-17 - Uart_Esp32 - Commit-Nachricht - Buildfehlerkorrektur - v0.3.txt
+```
+
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
-
-## Build-Hinweis v0.3
-
-Der mit PlatformIO/Espressif32 6.7.0 gemeldete Compilerfehler bei `max(...)` wurde behoben. Ursache waren gemischte Integer-Typen (`uint32_t`, `unsigned long`, `long`, `int`) bei Template-Aufrufen. Die betroffenen Vergleiche sind jetzt explizit typisiert bzw. ohne `max()`/`min()` formuliert.
 
 Das Projekt enthält nur die Infrastruktur-Funktionen aus der gewünschten Auswahl:
 
@@ -231,15 +278,13 @@ Die wichtigen NVS-Keys der ursprünglichen Firmware wurden soweit sinnvoll beibe
 
 Dadurch bleiben vorhandene Einstellungen bei einem Firmwarewechsel auf demselben ESP32 in vielen Fällen nutzbar.
 
+## Buildkorrektur v0.3
+
+Der PlatformIO-Build von v0.2 (`NodeMCU-32S`, Espressif32 6.7.0) scheiterte in `DeepSleepManager.cpp` und `main.cpp` an `max()`/`min()` mit gemischten Integer-Typen. v0.3 ersetzt diese Stellen durch typensichere Vergleiche und Konvertierungen.
+
 ## Prüfung
 
-Die Quelldateien wurden mit einem lokalen C++-Syntaxcheck gegen ESP32/Arduino-API-Stubs geprüft. Eine echte PlatformIO-Kompilierung war in der Erstellungsumgebung nicht möglich, weil PlatformIO dort nicht installiert war und kein Paketdownload verfügbar war. Vor dem Flashen daher einmal lokal ausführen:
-
-```bash
-pio run -e uart_esp32_usb
-```
-
-und anschließend z. B.:
+Der Fehler aus dem Buildprotokoll ist damit im Quellcode korrigiert. Da hier keine vollständige PlatformIO-Toolchain verfügbar ist, bitte Build und Upload lokal erneut ausführen:
 
 ```bash
 pio run -e uart_esp32_usb -t upload

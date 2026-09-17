@@ -1,0 +1,25 @@
+BL_Rename project and align documentation
+Date: 2026-09-17
+
+Summary:
+- Renamed the project and project root folder from Wasser_ESP32_WROOM32_Lite to Uart_Esp32 as explicitly requested.
+- Updated firmware-visible project identifiers, MQTT default identity, fallback AP SSID, hostname defaults, OTA fallback hostname, and PlatformIO environment names.
+- Added versioned project documentation in Markdown, DOCX, and PDF format.
+- Added project metadata, document versioning, change history, delivery notes, and the required documentation-rule exception for the explicitly requested root-folder rename.
+- Kept the ESP32-WROOM-32 / NodeMCU-32S target and the previously reduced firmware feature set unchanged.
+
+Changed files:
+- platformio.ini
+- src/main.cpp
+- src/MqttManager.cpp
+- src/OtaManager.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.2.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.2.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.2.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - Projektumbenennung - v0.2.txt
+
+Removed files:
+- README.md (replaced by the versioned project documentation under docs/)
+
+Package root:
+- Uart_Esp32/

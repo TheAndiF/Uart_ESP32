@@ -1,0 +1,18 @@
+BL_Fix ESP32 integer type build errors
+Date: 2026-09-17
+
+Summary:
+- Fixed PlatformIO/GCC build errors caused by mixed integer types in max()/min() calls.
+- Replaced affected comparisons in DeepSleepManager.cpp with explicit uint32_t-safe logic.
+- Sanitized MQTT heartbeat and relative wakeup values before converting long values to uint32_t.
+- Updated README project identifiers and PlatformIO environment names to Uart_Esp32.
+- Updated the project documentation to v0.3 and documented the build failure and correction.
+
+Changed files:
+- README.md
+- src/DeepSleepManager.cpp
+- src/main.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.3.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.3.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.3.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - Buildfehlerkorrektur - v0.3.txt
