@@ -9,10 +9,11 @@
 #include "DeepSleepManager.h"
 #include "OtaManager.h"
 #include "BatteryMonitor.h"
+#include "UartManager.h"
 #include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
-static const char* FW_BUILD_VERSION = "v0.6";
+static const char* FW_BUILD_VERSION = "v0.7";
 static const char* TZ_CET_CEST = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 AsyncWebServer server(80);
@@ -21,6 +22,7 @@ MqttManager mqtt;
 DeepSleepManager deepSleep;
 OtaManager ota;
 BatteryMonitor battery;
+UartManager uartMonitor;
 Preferences otaPrefs;
 
 String staticIp, gatewayIp, subnetMask;
@@ -110,7 +112,7 @@ static float espTemperature() {
 
 static String pageHead(const String& title) {
   String h = F("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>");
-  h += "<title>" + htmlEscape(title) + "</title><style>body{font-family:Arial;margin:0;padding:18px;background:#f4f4f4;color:#111}.box{max-width:760px;margin:auto;background:#fff;padding:20px;border-radius:10px;box-shadow:0 1px 5px #bbb}h1{text-align:center}fieldset{margin:14px 0;padding:12px;border:1px solid #ccc;border-radius:7px}label{display:block;font-weight:600;margin-top:9px}input,select{width:100%;box-sizing:border-box;padding:9px;margin-top:4px;font-size:16px}.btn,button,input[type=submit]{display:block;width:100%;box-sizing:border-box;padding:11px;margin:10px 0;text-align:center;border:1px solid #aaa;border-radius:5px;background:#eee;color:#000;text-decoration:none;font-size:16px}.mono{font-family:monospace;word-break:break-all}.ok{color:#087a1c}.bad{color:#a00000}.small{font-size:13px;color:#666}</style></head><body><div class='box'>";
+  h += "<title>" + htmlEscape(title) + "</title><style>body{font-family:Arial;margin:0;padding:18px;background:#f4f4f4;color:#111}.box{max-width:760px;margin:auto;background:#fff;padding:20px;border-radius:10px;box-shadow:0 1px 5px #bbb}h1{text-align:center}fieldset{margin:14px 0;padding:12px;border:1px solid #ccc;border-radius:7px}label{display:block;font-weight:600;margin-top:9px}input,select{width:100%;box-sizing:border-box;padding:9px;margin-top:4px;font-size:16px}.btn,button,input[type=submit]{display:block;width:100%;box-sizing:border-box;padding:11px;margin:10px 0;text-align:center;border:1px solid #aaa;border-radius:5px;background:#eee;color:#000;text-decoration:none;font-size:16px}.mono{font-family:monospace;word-break:break-all}.raw{font-family:monospace;white-space:pre-wrap;background:#111;color:#eee;padding:10px;border-radius:5px;min-height:90px;overflow:auto}.tbl{width:100%;border-collapse:collapse}.tbl th,.tbl td{border:1px solid #ccc;padding:7px;text-align:left}.tbl th{background:#eee}.ok{color:#087a1c}.bad{color:#a00000}.small{font-size:13px;color:#666}</style></head><body><div class='box'>";
   return h;
 }
 
@@ -492,6 +494,24 @@ static void publishSleepStatus() {
   mqtt.publish(b + "settings_json", deepSleep.settingsJson(), true);
 }
 
+static void publishUartStatus() {
+  if (!mqtt.isConnected()) return;
+  String b = mqttTopicBase + "/uart/";
+  mqtt.publish(b + "mode", uartMonitor.modeText(), true);
+  mqtt.publish(b + "status", uartMonitor.status(), false);
+  mqtt.publish(b + "bytes", String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)), false);
+  mqtt.publish(b + "packets", String(uartMonitor.packetCount()), false);
+  mqtt.publish(b + "valid_packets", String(uartMonitor.validPacketCount()), false);
+  mqtt.publish(b + "invalid_packets", String(uartMonitor.invalidPacketCount()), false);
+  if (!uartMonitor.hasMainPacket()) return;
+  for (uint8_t i=0;i<6;++i) {
+    String f = b + "field" + String(i+1) + "/";
+    mqtt.publish(f + "raw", String(uartMonitor.rawField(i)), false);
+    mqtt.publish(f + "alias", uartMonitor.fieldAlias(i), true);
+    if (i < 5) mqtt.publish(f + "norm", String(uartMonitor.normalizedField(i), 4), false);
+  }
+}
+
 static void publishHeartbeat() {
   if (!mqttEnabled) return;
   mqtt.connectIfNeeded();
@@ -507,6 +527,9 @@ static void publishHeartbeat() {
   mqtt.publish(b + "time", nowText(), false);
   mqtt.publish(b + "mqtt_status", mqtt.getLastStatus(), false);
   mqtt.publish(b + "firmware", FW_NAME, true);
+  mqtt.publish(b + "uart_mode", uartMonitor.modeText(), true);
+  mqtt.publish(b + "uart_bytes", String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)), false);
+  publishUartStatus();
   publishBattery(false);
   publishSleepStatus();
   lastHeartbeat = millis();
@@ -572,7 +595,8 @@ static String mainPage() {
   if (battery.valid) h += "<p><b>Spannung:</b> " + String(battery.voltage,3) + " V</p>";
   h += "</fieldset>";
   h += "<fieldset><legend>Deep Sleep</legend><p><b>Aktiv:</b> " + String(deepSleep.isEnabled()?"ja":"nein") + "</p><p><b>Modus:</b> " + deepSleep.wakeupMode() + "</p><p><b>Naechster Wakeup:</b> " + deepSleep.nextWakeupText() + "</p></fieldset>";
-  h += "<a class='btn' href='/network'>WLAN / NTP</a><a class='btn' href='/mqtt'>MQTT</a><a class='btn' href='/battery'>Batterie / ADC</a><a class='btn' href='/deepsleep'>Deep Sleep</a><a class='btn' href='/ota'>OTA Update</a>";
+  h += "<fieldset><legend>UART</legend><p><b>Modus:</b> " + htmlEscape(uartMonitor.modeText()) + "</p><p><b>Status:</b> " + htmlEscape(uartMonitor.status()) + "</p><p><b>Empfangene Bytes:</b> " + String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)) + "</p></fieldset>";
+  h += "<a class='btn' href='/uart'>UART Monitor / Decoder</a><a class='btn' href='/network'>WLAN / NTP</a><a class='btn' href='/mqtt'>MQTT</a><a class='btn' href='/battery'>Batterie / ADC</a><a class='btn' href='/deepsleep'>Deep Sleep</a><a class='btn' href='/ota'>OTA Update</a>";
   h += "<form method='post' action='/reboot'><button type='submit'>ESP32 neu starten</button></form></div></body></html>";
   return h;
 }
@@ -617,6 +641,57 @@ static String networkPage() {
   h += "<fieldset><legend>Fallback Access Point</legend><label>AP SSID</label><input name='ap_ssid' value='"+htmlEscape(apSsid)+"'><label>AP Passwort (leer = offen, sonst min. 8 Zeichen)</label><input type='password' name='ap_pw' placeholder='leer = unveraendert'><p class='small'>Falls dieser AP nicht startet, verwendet die Firmware automatisch einen offenen Emergency-AP mit eindeutiger Chip-ID.</p></fieldset>";
   h += "<fieldset><legend>System</legend><label>Hostname</label><input name='hostname' value='"+htmlEscape(hostname)+"'><label>NTP Server</label><input name='ntp_server' value='"+htmlEscape(ntpServer)+"'><p class='small'>Zeitzone: Deutschland (CET/CEST), Sommer-/Winterzeit automatisch.</p></fieldset><button type='submit'>NVS-Fallback speichern und neu starten</button></form>";
   h += "<form method='post' action='/clear_wifi_nvs'><button type='submit'>Gespeichertes NVS-WLAN loeschen</button></form><a class='btn' href='/'>Zurueck</a></div></body></html>";
+  return h;
+}
+
+static String uartPage() {
+  String h = pageHead("UART Monitor / Decoder");
+  h += "<h1>UART Monitor / Decoder</h1>";
+  h += "<p class='small'>UART0 bleibt fuer den seriellen Debug-Monitor reserviert. Verwendbar sind Hardware-UART1 oder UART2. RX zuerst anschliessen; TX kann mit -1 deaktiviert bleiben.</p>";
+  h += "<form method='post' action='/save_uart'><fieldset><legend>Betriebsart / Schnittstelle</legend>";
+  h += "<label>Modus</label><select name='mode'><option value='0'" + String(uartMonitor.mode()==UartManager::Mode::Off?" selected":"") + ">Aus</option><option value='1'" + String(uartMonitor.mode()==UartManager::Mode::Raw?" selected":"") + ">Raw / Sniffer</option><option value='2'" + String(uartMonitor.mode()==UartManager::Mode::Decode?" selected":"") + ">Protokoll-Decoder</option></select>";
+  h += "<label>Hardware-UART</label><select name='uartno'><option value='1'" + String(uartMonitor.uartNumber()==1?" selected":"") + ">UART1</option><option value='2'" + String(uartMonitor.uartNumber()==2?" selected":"") + ">UART2</option></select>";
+  h += "<label>RX GPIO</label><input type='number' min='0' max='39' name='rxpin' value='" + String(uartMonitor.rxPin()) + "'>";
+  h += "<label>TX GPIO (-1 = nicht verwenden)</label><input type='number' min='-1' max='33' name='txpin' value='" + String(uartMonitor.txPin()) + "'>";
+  h += "<label>Baudrate</label><input type='number' min='300' max='2000000' name='baud' value='" + String(uartMonitor.baud()) + "'>";
+  h += "<label>Format</label><select name='frame'>";
+  const char* frames[] = {"8N1","8E1","8O1","8N2"};
+  for (const char* f : frames) h += "<option value='" + String(f) + "'" + String(uartMonitor.frame()==f?" selected":"") + ">" + String(f) + "</option>";
+  h += "</select><p class='small'>Nicht verwenden: GPIO6..11 (Flash), GPIO1/3 (Debug-UART). GPIO34..39 sind nur als RX geeignet.</p></fieldset>";
+
+  h += "<fieldset><legend>Feldnamen</legend><p class='small'>Der feste technische Name Feld 1 ... Feld 6 bleibt immer sichtbar. Der Alias ist nur eine zusaetzliche, frei aenderbare Bezeichnung.</p>";
+  for (uint8_t i=0;i<6;++i) {
+    h += "<label>Alias fuer Feld " + String(i+1) + "</label><input maxlength='32' name='label" + String(i+1) + "' value='" + htmlEscape(uartMonitor.fieldAlias(i)) + "' placeholder='z. B. Kanal / Regler / noch unbekannt'>";
+  }
+  h += "</fieldset>";
+
+  h += "<fieldset><legend>Decoder-Kalibrierung</legend><p class='small'>Defaultwerte stammen aus der Messunterlage. Feld 6 wird weiterhin nur als Rohwert dargestellt.</p>";
+  h += "<label>Totzone 0.00 ... 0.50</label><input type='number' step='0.001' min='0' max='0.5' name='deadband' value='" + String(uartMonitor.deadband(),3) + "'>";
+  h += "<table class='tbl'><tr><th>Feld</th><th>Minimum</th><th>Mitte</th><th>Maximum</th></tr>";
+  for (uint8_t i=0;i<5;++i) {
+    auto c = uartMonitor.calibration(i);
+    h += "<tr><td>Feld " + String(i+1) + "</td><td><input type='number' name='min" + String(i+1) + "' value='" + String(c.minV) + "'></td><td><input type='number' name='ctr" + String(i+1) + "' value='" + String(c.centerV) + "'></td><td><input type='number' name='max" + String(i+1) + "' value='" + String(c.maxV) + "'></td></tr>";
+  }
+  h += "</table></fieldset><button type='submit'>UART-Einstellungen speichern / neu starten</button></form>";
+
+  h += "<fieldset><legend>Live-Status</legend><p><b>Status:</b> <span id='uart_status'>" + htmlEscape(uartMonitor.status()) + "</span></p><p><b>Bytes:</b> <span id='uart_bytes'>0</span></p>";
+  h += "<table class='tbl'><tr><th>Technisches Feld</th><th>Alias</th><th>Rohwert</th><th>Normiert</th></tr>";
+  for (uint8_t i=0;i<6;++i) {
+    String alias = uartMonitor.fieldAlias(i); if (!alias.length()) alias = "-";
+    h += "<tr><td><b>Feld " + String(i+1) + "</b></td><td>" + htmlEscape(alias) + "</td><td id='raw" + String(i+1) + "'>-</td><td id='norm" + String(i+1) + "'>" + String(i<5?"-":"nicht normiert") + "</td></tr>";
+  }
+  h += "</table><p><b>Pakete:</b> <span id='pkt'>0</span> &nbsp; <b>gueltig:</b> <span id='pkt_ok'>0</span> &nbsp; <b>ungueltig:</b> <span id='pkt_bad'>0</span> &nbsp; <b>0x10/0x15:</b> <span id='pkt_main'>0</span></p></fieldset>";
+  h += "<fieldset><legend>Letzte Rohdaten</legend><p class='small'>Maximal die letzten 256 Bytes der internen 512-Byte-Ringpufferung.</p><b>HEX</b><pre class='raw' id='raw_hex'>" + htmlEscape(uartMonitor.rawHex(256)) + "</pre><b>ASCII</b><pre class='raw' id='raw_ascii'>" + htmlEscape(uartMonitor.rawAscii(256)) + "</pre></fieldset>";
+  h += "<form method='post' action='/uart_clear'><button type='submit'>Rohdatenpuffer leeren</button></form><a class='btn' href='/'>Zurueck</a>";
+  h += R"rawliteral(<script>
+async function updateUart(){try{const r=await fetch('/uart/status',{cache:'no-store'});if(!r.ok)return;const d=await r.json();
+document.getElementById('uart_status').textContent=d.status;document.getElementById('uart_bytes').textContent=d.total_bytes;
+document.getElementById('raw_hex').textContent=d.raw_hex;document.getElementById('raw_ascii').textContent=d.raw_ascii;
+document.getElementById('pkt').textContent=d.packets;document.getElementById('pkt_ok').textContent=d.valid;document.getElementById('pkt_bad').textContent=d.invalid;document.getElementById('pkt_main').textContent=d.main;
+if(d.fields){for(let i=0;i<d.fields.length;i++){const n=i+1;document.getElementById('raw'+n).textContent=d.has_main?d.fields[i].raw:'-';if(i<5)document.getElementById('norm'+n).textContent=d.has_main?Number(d.fields[i].norm).toFixed(3):'-';}}
+}catch(e){}}setInterval(updateUart,1000);updateUart();
+</script>)rawliteral";
+  h += "</div></body></html>";
   return h;
 }
 
@@ -666,6 +741,34 @@ static void registerRoutes() {
     r->send(200,"text/html; charset=utf-8",pageHead("WLAN geloescht")+"<h1>NVS-WLAN geloescht</h1><p>Neustart ...</p></div></body></html>");
     delay(500); ESP.restart();
   });
+  server.on("/uart", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",uartPage()); });
+  server.on("/uart/status", HTTP_GET, [](AsyncWebServerRequest* r){
+    AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.statusJson());
+    resp->addHeader("Cache-Control", "no-store");
+    r->send(resp);
+  });
+  server.on("/uart_clear", HTTP_POST, [](AsyncWebServerRequest* r){ uartMonitor.clearRaw(); r->redirect("/uart"); });
+  server.on("/save_uart", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (r->hasArg("mode")) uartMonitor.setMode((UartManager::Mode)r->arg("mode").toInt());
+    if (r->hasArg("uartno")) uartMonitor.setUartNumber((uint8_t)r->arg("uartno").toInt());
+    if (r->hasArg("rxpin")) uartMonitor.setRxPin(r->arg("rxpin").toInt());
+    if (r->hasArg("txpin")) uartMonitor.setTxPin(r->arg("txpin").toInt());
+    if (r->hasArg("baud")) uartMonitor.setBaud((uint32_t)r->arg("baud").toInt());
+    if (r->hasArg("frame")) uartMonitor.setFrame(r->arg("frame"));
+    if (r->hasArg("deadband")) uartMonitor.setDeadband(r->arg("deadband").toFloat());
+    for (uint8_t i=0;i<6;++i) { String k="label"+String(i+1); if(r->hasArg(k)) uartMonitor.setFieldAlias(i,r->arg(k)); }
+    for (uint8_t i=0;i<5;++i) {
+      String km="min"+String(i+1), kc="ctr"+String(i+1), kx="max"+String(i+1);
+      if (r->hasArg(km) && r->hasArg(kc) && r->hasArg(kx)) {
+        long mn=r->arg(km).toInt(), ct=r->arg(kc).toInt(), mx=r->arg(kx).toInt();
+        if (mn>=0 && ct>=0 && mx>=0 && mn<ct && ct<mx && mx<=65535) uartMonitor.setCalibration(i,(uint16_t)mn,(uint16_t)ct,(uint16_t)mx);
+      }
+    }
+    uartMonitor.save();
+    bool ok=uartMonitor.restart();
+    if (!ok) r->send(400,"text/html; charset=utf-8",pageHead("UART Fehler")+"<h1>UART-Konfiguration ungueltig</h1><p>"+htmlEscape(uartMonitor.status())+"</p><a class='btn' href='/uart'>Zurueck</a></div></body></html>");
+    else r->redirect("/uart");
+  });
   server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",mqttPage()); });
   server.on("/save_mqtt", HTTP_POST, [](AsyncWebServerRequest* r){
     if(r->hasArg("enabled")) mqttEnabled=r->arg("enabled").toInt(); if(r->hasArg("host")) mqttHost=r->arg("host"); if(r->hasArg("port")) mqttPort=r->arg("port").toInt();
@@ -698,6 +801,7 @@ void setup() {
   Serial.printf("[BOOT] Resetgrund: %s (%d)\n", resetReasonText().c_str(), (int)esp_reset_reason());
   loadSettings();
   battery.load(); battery.begin(); battery.measure("boot");
+  uartMonitor.begin();
   deepSleep.begin(); deepSleep.setBeforeSleepCallback(beforeSleep);
   ota.begin(otaPrefs);
 
@@ -714,6 +818,7 @@ void setup() {
 }
 
 void loop() {
+  uartMonitor.loop();
   ota.loop(); mqtt.loop();
 
   serviceWifi();

@@ -202,7 +202,7 @@
   #define UART_PULL_OTA_URL ""
 #endif
 #ifndef UART_FW_VERSION
-  #define UART_FW_VERSION "0.6.0"
+  #define UART_FW_VERSION "0.7.0"
 #endif
 
 #ifndef UART_BATTERY_ENABLED

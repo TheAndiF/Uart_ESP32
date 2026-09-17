@@ -1,0 +1,25 @@
+BL_Add UART sniffer and protocol decoder
+Date: 2026-09-17
+
+Summary:
+- Added a configurable UART raw/sniffer mode for ESP32 HardwareSerial 1 or 2.
+- Added configurable RX/TX GPIOs, baud rate and UART frame settings with NVS persistence.
+- Added a protocol decoder based on the provided UART measurement document: FF FB synchronization, length-based packet assembly, XOR checksum validation and 0x10/0x15 main-packet decoding.
+- Added calibration and -1.0..+1.0 normalization for fields 1..5 and raw display for field 6.
+- Added editable field aliases while keeping the fixed technical labels "Field 1" through "Field 6" visible.
+- Added UART live status, raw HEX/ASCII display, packet counters and MQTT UART status topics.
+- Updated project documentation to version v0.7.
+- Kept the supplied root folder name Uart_ESP32 unchanged for this code-package delivery.
+- Excluded the local arduino_secrets.h from the delivery package.
+
+Changed files:
+- README.md
+- include/arduino_secrets.example.h
+- src/ConfigDefaults.h
+- src/main.cpp
+- src/UartManager.h
+- src/UartManager.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.7.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.7.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.7.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - UART-Monitor-und-Decoder - v0.7.txt

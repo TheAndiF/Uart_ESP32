@@ -40,7 +40,7 @@
 #define UART_PULL_OTA_ENABLED     false
 #define UART_PULL_OTA_AUTO_CHECK  false
 #define UART_PULL_OTA_URL         ""
-#define UART_FW_VERSION           "0.6.0"
+#define UART_FW_VERSION           "0.7.0"
 
 // Optional battery defaults
 #define UART_BATTERY_ENABLED  true

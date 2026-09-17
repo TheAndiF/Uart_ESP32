@@ -2,8 +2,11 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.6
+## Stand v0.7
 
+
+
+**Erweiterung v0.7:** Zwei UART-Betriebsarten wurden ergaenzt: ein Raw-/Sniffer-Modus fuer unverarbeitete serielle Daten sowie ein Protokoll-Decoder gemaess der Messunterlage `ESP32_UART_Protokoll_Entschluesselung`. UART-Nummer, RX/TX-Pins, Baudrate und Format sind ueber `/uart` einstellbar und werden in NVS gespeichert. Fuer Feld 1 bis Feld 6 gibt es frei editierbare Aliasnamen, waehrend die feste technische Kennung `Feld N` immer sichtbar bleibt.
 
 **Buildfix v0.6:** In `markWifiConnected()` war die Zuweisung `wifiDhcpFallback = pendingWifiForceDhcp;` versehentlich zwischen einem `if` und dem zugehoerigen `else if` eingefuegt. Dadurch meldete GCC `else without a previous if`. Die Verzweigung ist jetzt korrekt geklammert und die DHCP-Fallback-Markierung wird erst nach der Quellenwahl gesetzt.
 
@@ -114,6 +117,48 @@ In `arduino_secrets.h` koennen optional folgende Werte gesetzt werden:
 #define UART_AP_KEEP_AFTER_CONNECT       false
 ```
 
+
+## UART Monitor / Protokoll-Decoder (v0.7)
+
+Neu hinzugekommen ist eine eigene UART-Seite unter `http://<ESP-IP>/uart`. Die Funktion ist in drei Betriebsarten aufgeteilt:
+
+- **Aus** - keine zusaetzliche UART-Schnittstelle aktiv.
+- **Raw / Sniffer** - empfangene Bytes werden ungefiltert in einem Ringpuffer erfasst und im Webinterface als HEX und ASCII angezeigt.
+- **Protokoll-Decoder** - zusaetzlich zur Rohdatenanzeige wird das in der Messunterlage `ESP32_UART_Protokoll_Entschluesselung` beschriebene Paketformat ausgewertet.
+
+Konfigurierbar und in NVS gespeichert werden Hardware-UART 1 oder 2, RX-GPIO, optionaler TX-GPIO, Baudrate und UART-Format (`8N1`, `8E1`, `8O1`, `8N2`). UART0 bleibt fuer den seriellen Debug-Monitor reserviert. GPIO6..11 werden wegen des Flashs gesperrt; GPIO1/3 bleiben fuer UART0 frei. GPIO34..39 koennen nur als RX verwendet werden.
+
+Der Decoder synchronisiert auf `FF FB`, liest Typ und Laenge, sammelt `4 + Laenge` Bytes und prueft die XOR-Pruefsumme ueber Byte 6 bis zum Byte vor der Pruefsumme. Fuer das bestaetigte Hauptpaket Typ `0x10`, Laenge `0x15` werden sechs 16-Bit-Little-Endian-Felder ab Byte 12 dekodiert. Feld 1 bis Feld 5 werden mit separaten Min-/Mitte-/Max-Werten auf `-1.0 ... +1.0` normiert und koennen mit einer einstellbaren Totzone stabilisiert werden. Feld 6 bleibt bewusst als Rohwert sichtbar.
+
+### Aenderbare Feldnamen bei unveraenderter technischer Kennung
+
+Fuer **Feld 1 bis Feld 6** gibt es jeweils ein freies Alias-Textfeld. Der technische Name bleibt dabei immer sichtbar. Ein Alias ersetzt den Feldnamen also nicht, sondern wird nur ergaenzt. Beispiel:
+
+```text
+Feld 1 - Roll
+Feld 2 - Pitch
+Feld 3 - noch unbekannt
+```
+
+Solange die Bedeutung nicht bestaetigt ist, kann das Alias-Feld leer bleiben oder z. B. `noch unbekannt` enthalten. Die Aliase werden in NVS gespeichert und auch ueber MQTT unter `<Basis>/uart/fieldN/alias` veroeffentlicht.
+
+### UART-Webrouten
+
+| Route | Funktion |
+|---|---|
+| `/uart` | UART-Konfiguration, Raw-Ansicht, Decoder-Livewerte, Feld-Aliase und Kalibrierung |
+| `/uart/status` | Live-Status als JSON fuer die Weboberflaeche |
+| `/save_uart` | Einstellungen, Aliase und Kalibrierwerte speichern |
+| `/uart_clear` | Rohdaten-Ringpuffer leeren |
+
+### UART-MQTT-Status
+
+Unter `<Basis>/uart/` werden mit dem normalen Heartbeat unter anderem Modus, Status, Byte-/Paketzaehler sowie bei einem dekodierten Hauptpaket `field1` bis `field6` als Rohwerte veroeffentlicht. Fuer Feld 1 bis 5 wird zusaetzlich `norm` ausgegeben; die frei editierbaren Aliasnamen werden separat retained veroeffentlicht. Rohdaten-HEX-Streams werden absichtlich nicht per MQTT gespiegelt.
+
+### Elektrischer Hinweis
+
+Fuer erste Messungen sollte nur RX verbunden werden. ESP32-GPIOs arbeiten mit 3,3-V-Logik und sind nicht 5-V-tolerant. Gemeinsame Masse herstellen und den High-Pegel der Ziel-UART vor dem Anschluss pruefen.
+
 ## Batterie / ADC
 
 Standard:
@@ -142,6 +187,8 @@ Vor dem Anschließen bitte sicherstellen, dass die maximale Spannung am ADC-Pin 
 | `/network` | WLAN-Scan/Auswahl, AP, Hostname, NTP |
 | `/wifi_rescan` | WLAN-Scan neu starten |
 | `/clear_wifi_nvs` | gespeichertes NVS-WLAN löschen, POST |
+| `/uart` | UART Raw/Sniffer, Protokoll-Decoder, Feld-Aliase und Kalibrierung |
+| `/uart/status` | UART Live-Status als JSON |
 | `/mqtt` | MQTT-Einstellungen / Verbindungstest |
 | `/battery` | ADC-Batteriemessung für Deep Sleep |
 | `/deepsleep` | Deep-Sleep-Konfiguration |
