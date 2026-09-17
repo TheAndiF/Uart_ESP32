@@ -2,34 +2,35 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.4
+## Stand v0.6
 
-Konfigurationswerte werden jetzt in dieser Reihenfolge geladen:
 
-1. bereits in NVS gespeicherte Werte,
-2. Werte aus der optionalen lokalen Datei `include/arduino_secrets.h`,
-3. sichere interne Defaults.
+**Buildfix v0.6:** In `markWifiConnected()` war die Zuweisung `wifiDhcpFallback = pendingWifiForceDhcp;` versehentlich zwischen einem `if` und dem zugehoerigen `else if` eingefuegt. Dadurch meldete GCC `else without a previous if`. Die Verzweigung ist jetzt korrekt geklammert und die DHCP-Fallback-Markierung wird erst nach der Quellenwahl gesetzt.
 
-Fehlende NVS-Keys werden vor dem Lesen mit `Preferences::isKey()` geprüft. Dadurch erzeugt ein frischer ESP32 keine `NOT_FOUND`-Fehlermeldungen mehr für noch nicht gespeicherte Strings oder Float-Werte.
+Der WLAN-Teil wurde fuer instabile Verbindungen und frische Geraete robuster aufgebaut. Die Firmware verwendet jetzt mehrere voneinander unabhaengige Fallback-Stufen statt wiederholt unmittelbar zwischen STA und AP umzuschalten. Dadurch sollen insbesondere Meldungen wie `mode(): Could not set mode!` und `softAP(): enable AP first!` vermieden werden.
 
-Für WLAN gilt zusätzlich: Sind weder NVS-Zugangsdaten noch eine SSID aus `arduino_secrets.h` vorhanden, startet der ESP32 sofort den Fallback-AP. Im Webinterface können verfügbare WLANs gescannt und ausgewählt werden. Nach dem Speichern werden SSID und Passwort in NVS abgelegt und beim nächsten Start bevorzugt verwendet.
+Fuer WLAN gilt standardmaessig diese Reihenfolge:
 
-Das Projekt enthält nur die Infrastruktur-Funktionen aus der gewünschten Auswahl:
+1. gueltige Zugangsdaten aus `include/arduino_secrets.h`,
+2. ein separat ueber das Webinterface in NVS gespeichertes WLAN,
+3. bei konfigurierter statischer IP ein zweiter Versuch ueber DHCP,
+4. Fallback-AP im Modus AP+STA, damit Provisionierung und spaetere Reconnects parallel moeglich bleiben,
+5. falls der konfigurierte AP nicht startet: offener Emergency-AP `Uart_Esp32-Recovery-<ChipID>`.
 
-- WLAN-Client mit Reconnect
-- Fallback Access Point
+Platzhalter wie `YOUR_WIFI_SSID` oder `CHANGE_ME` gelten nicht als gueltige Secrets. Ein NVS-WLAN bleibt als echte Alternative erhalten, auch wenn eine `arduino_secrets.h` vorhanden ist. Der Fallback-AP wird nach einer stabilen STA-Verbindung standardmaessig nach 15 Sekunden abgeschaltet. Faellt WLAN spaeter aus, wird er automatisch wieder bereitgestellt.
+
+Normale Laufzeiteinstellungen verwenden weiterhin **NVS > arduino_secrets.h > interne Defaults**. Dadurch bleiben Einstellungen aus dem Webinterface wirksam. WLAN-Zugangsdaten sind die Ausnahme: hier ist `arduino_secrets.h` standardmaessig der erste Verbindungskandidat und NVS der zweite.
+
+Die Startseite und `/network` zeigen nun zusaetzlich WLAN-Modus, aktive Zugangsdatenquelle, Reconnect-Zaehler, Fehlerzaehler und Resetgrund. Im seriellen Boot-Log stehen Firmwarestand, Build-Zeit und Resetursache.
+
+Das Projekt enthaelt weiterhin nur die Infrastruktur-Funktionen aus der gewuenschten Auswahl:
+
+- WLAN-Client mit robustem Reconnect und mehreren Fallbacks
+- Fallback Access Point / Emergency-AP
 - NTP + deutsche CET/CEST-Zeitzone mit automatischer Sommer-/Winterzeit
 - Webinterface
 - MQTT mit Statuswerten, Fernsteuerung und Heartbeat
-- Deep Sleep
-  - Intervall
-  - volle Stunde + Minutenoffset
-  - feste Uhrzeiten
-  - Mixed-Modus
-  - Einmal-Wakeup
-  - Nachtmodus
-  - batterieabhängige Intervalle
-  - MQTT-abhängiges Einschlafen
+- Deep Sleep mit Intervall, voller Stunde, festen Zeiten, Mixed-Modus, Einmal-Wakeup, Nachtmodus, Batterie- und MQTT-Abhaengigkeit
 - Browser OTA
 - ArduinoOTA / PlatformIO OTA
 - HTTP Pull OTA
@@ -37,9 +38,7 @@ Das Projekt enthält nur die Infrastruktur-Funktionen aus der gewünschten Auswa
 - interne ESP32-Temperatur
 - Web-Reboot
 
-Entfernt wurden u. a. VL53L1X, UART-Entfernungssensor, INA226, Regentonnenkontakt, Feeder, USB/GPIO-Portsteuerung und die komplette Distanz-Messautomatik.
-
-Die kleine ADC-Batteriemessung ist **nur als notwendige Datenquelle für den batterieabhängigen Deep Sleep** enthalten.
+Entfernt bleiben u. a. VL53L1X, UART-Entfernungssensor, INA226, Regentonnenkontakt, Feeder, USB/GPIO-Portsteuerung und die Distanz-Messautomatik. Die ADC-Batteriemessung ist nur als Datenquelle fuer den batterieabhaengigen Deep Sleep enthalten.
 
 ## Hardware / PlatformIO
 
@@ -85,19 +84,35 @@ Beispiel:
 
 Die üblichen Arduino-Namen `SECRET_SSID` und `SECRET_PASS` werden ebenfalls als WLAN-Aliase akzeptiert. Alle Defines sind optional. Fehlt die Datei oder ein einzelner Wert, verwendet die Firmware sichere Defaults. Zugangsdaten-Dummies sind standardmäßig leer, damit nicht versehentlich eine Verbindung mit Platzhalterwerten versucht wird.
 
-Die Start-Priorität ist **NVS > arduino_secrets.h > interne Defaults**. Damit bleiben WLAN-Daten, die später über das Webinterface gewählt wurden, nach Neustarts erhalten.
+Für normale Einstellungen gilt **NVS > arduino_secrets.h > interne Defaults**. Für WLAN-Zugangsdaten gilt standardmäßig **arduino_secrets.h > NVS > AP**. Die Reihenfolge und einzelne Fallbacks können über die in `arduino_secrets.example.h` dokumentierten Makros angepasst werden.
 
 ## Erster Start / WLAN-Provisionierung
 
-Sind keine WLAN-Zugangsdaten in NVS und keine SSID in `arduino_secrets.h` vorhanden, startet sofort der Fallback-AP:
+Sind gueltige WLAN-Zugangsdaten in `arduino_secrets.h` vorhanden, werden sie zuerst versucht. Schlaegt dieses WLAN fehl, probiert die Firmware ein ueber das Webinterface gespeichertes NVS-WLAN. Sind statische IP-Daten gesetzt und die Verbindung scheitert, folgt optional ein zweiter Durchlauf mit DHCP.
 
-- SSID: `Uart_Esp32-Setup`
+Sind keine funktionierenden Client-Zugangsdaten vorhanden, startet der Provisionierungs-AP:
+
+- Standard-SSID: `Uart_Esp32-Setup`
 - IP: `192.168.4.1`
-- Passwort: keines (offener AP)
+- Passwort: keines, sofern nicht konfiguriert
 
-Im Browser `http://192.168.4.1/` öffnen und **WLAN / NTP** wählen. Dort werden gefundene WLANs in einer Auswahlliste angezeigt. Gewähltes WLAN und Passwort werden beim Speichern in NVS geschrieben; danach startet der ESP32 neu und verbindet sich als WLAN-Client.
+Im Browser `http://192.168.4.1/` oeffnen und **WLAN / NTP** waehlen. Dort werden - sofern AP+STA zur Verfuegung steht - WLANs gescannt und angezeigt. Ausgewaehlte SSID und Passwort werden als NVS-Fallback gespeichert. Eine vorhandene Secret-SSID bleibt trotzdem der erste Boot-Kandidat.
 
-Eine leere statische IP bedeutet DHCP.
+Falls AP+STA vom WLAN-Treiber nicht aktiviert werden kann, versucht die Firmware einen reinen AP-Recovery-Modus und laesst diesen stabil aktiv, statt ihn durch weitere automatische Reconnect-Umschaltungen zu zerstoeren. Kann auch der konfigurierte AP nicht gestartet werden, wird als letzte Stufe ein offener Emergency-AP `Uart_Esp32-Recovery-<ChipID>` versucht.
+
+Eine leere statische IP bedeutet DHCP. Das gespeicherte NVS-WLAN kann auf `/network` auch gezielt geloescht werden.
+
+### WLAN-Fallback-Schalter
+
+In `arduino_secrets.h` koennen optional folgende Werte gesetzt werden:
+
+```cpp
+#define UART_WIFI_PREFER_SECRETS         true
+#define UART_WIFI_ALLOW_NVS_FALLBACK     true
+#define UART_WIFI_ALLOW_DHCP_FALLBACK    true
+#define UART_WIFI_ALLOW_EMERGENCY_AP     true
+#define UART_AP_KEEP_AFTER_CONNECT       false
+```
 
 ## Batterie / ADC
 
@@ -126,6 +141,7 @@ Vor dem Anschließen bitte sicherstellen, dass die maximale Spannung am ADC-Pin 
 | `/` | Hauptstatus |
 | `/network` | WLAN-Scan/Auswahl, AP, Hostname, NTP |
 | `/wifi_rescan` | WLAN-Scan neu starten |
+| `/clear_wifi_nvs` | gespeichertes NVS-WLAN löschen, POST |
 | `/mqtt` | MQTT-Einstellungen / Verbindungstest |
 | `/battery` | ADC-Batteriemessung für Deep Sleep |
 | `/deepsleep` | Deep-Sleep-Konfiguration |

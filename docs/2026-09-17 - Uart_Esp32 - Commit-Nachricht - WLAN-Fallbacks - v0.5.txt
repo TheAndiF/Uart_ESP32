@@ -1,0 +1,21 @@
+BL_Improve WiFi fallback and recovery handling
+Date: 2026-09-17
+
+Summary:
+- Prefer valid Arduino Secrets WiFi credentials while retaining NVS WiFi as an independent fallback.
+- Added staged static-IP to DHCP fallback handling.
+- Reworked AP/STA mode changes to avoid repeated unsafe mode switching.
+- Added AP+STA provisioning, stable AP-only recovery mode, and emergency open AP fallback.
+- Added automatic fallback-AP shutdown after successful STA connection and automatic AP restoration after later disconnects.
+- Added reset reason, build information, WiFi mode/source, reconnect counters, and NVS WiFi clear action to diagnostics.
+- Updated documentation and Arduino Secrets example for the new fallback policy.
+
+Changed files:
+- README.md
+- include/arduino_secrets.example.h
+- src/ConfigDefaults.h
+- src/main.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.5.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.5.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.5.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - WLAN-Fallbacks - v0.5.txt

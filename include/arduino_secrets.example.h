@@ -7,6 +7,14 @@
 #define UART_WIFI_SSID       "YOUR_WIFI_SSID"
 #define UART_WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
 
+// WLAN fallback policy. Secrets are tried first by default. If they fail,
+// a WLAN saved via the web UI in NVS is tried next.
+#define UART_WIFI_PREFER_SECRETS         true
+#define UART_WIFI_ALLOW_NVS_FALLBACK     true
+#define UART_WIFI_ALLOW_DHCP_FALLBACK    true
+#define UART_WIFI_ALLOW_EMERGENCY_AP     true
+#define UART_AP_KEEP_AFTER_CONNECT       false
+
 // Optional network defaults
 #define UART_STATIC_IP       ""                 // empty = DHCP
 #define UART_GATEWAY_IP      "192.168.1.1"
@@ -32,7 +40,7 @@
 #define UART_PULL_OTA_ENABLED     false
 #define UART_PULL_OTA_AUTO_CHECK  false
 #define UART_PULL_OTA_URL         ""
-#define UART_FW_VERSION           "1.0.0"
+#define UART_FW_VERSION           "0.6.0"
 
 // Optional battery defaults
 #define UART_BATTERY_ENABLED  true

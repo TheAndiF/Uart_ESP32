@@ -1,0 +1,18 @@
+BL_Fix WiFi connection state compile error
+Date: 2026-09-17
+
+Summary:
+- Fixed the C++ compile error "else without a previous if" in markWifiConnected().
+- Kept the WiFi source selection and DHCP fallback state as separate, explicit operations.
+- Updated the firmware/project version to v0.6 / 0.6.0.
+- Updated project documentation for the build fix.
+
+Changed files:
+- README.md
+- include/arduino_secrets.example.h
+- src/ConfigDefaults.h
+- src/main.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.6.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.6.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.6.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - Buildfix-markWifiConnected - v0.6.txt

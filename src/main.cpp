@@ -3,6 +3,7 @@
 #include <ESPAsyncWebServer.h>
 #include <Preferences.h>
 #include <time.h>
+#include <esp_system.h>
 
 #include "MqttManager.h"
 #include "DeepSleepManager.h"
@@ -11,7 +12,7 @@
 #include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
-static const char* FW_VERSION_DEFAULT = "1.0.0";
+static const char* FW_BUILD_VERSION = "v0.6";
 static const char* TZ_CET_CEST = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 AsyncWebServer server(80);
@@ -22,7 +23,8 @@ OtaManager ota;
 BatteryMonitor battery;
 Preferences otaPrefs;
 
-String wifiSsid, wifiPassword, staticIp, gatewayIp, subnetMask;
+String staticIp, gatewayIp, subnetMask;
+String nvsWifiSsid, nvsWifiPassword;
 String apSsid, apPassword, hostname, ntpServer;
 bool mqttEnabled = false;
 String mqttHost, mqttUser, mqttPassword, mqttTopicBase, mqttClientId;
@@ -30,8 +32,21 @@ uint16_t mqttPort = 1883;
 uint32_t heartbeatMs = 60000UL;
 
 bool apActive = false;
+bool apOnlyRecovery = false;
 bool wifiLoadedFromNvs = false;
 bool otaStarted = false;
+bool wifiAttemptActive = false;
+bool wifiDhcpFallback = false;
+bool pendingWifiForceDhcp = false;
+String activeWifiSource = "keine";
+String pendingWifiSource;
+String pendingWifiSsid;
+uint8_t nextWifiCandidate = 0;
+uint32_t wifiReconnectCount = 0;
+uint32_t wifiFailureCount = 0;
+unsigned long wifiAttemptStarted = 0;
+unsigned long wifiDisconnectedSince = 0;
+unsigned long apShutdownAt = 0;
 unsigned long lastWifiTry = 0;
 unsigned long lastMqttTry = 0;
 unsigned long lastHeartbeat = 0;
@@ -45,6 +60,32 @@ static String chipId() {
 }
 
 static String defaultIdentity() { return "Uart_Esp32_" + chipId(); }
+
+static String resetReasonText() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "POWERON_RESET";
+    case ESP_RST_EXT: return "EXTERNAL_RESET";
+    case ESP_RST_SW: return "SOFTWARE_RESET";
+    case ESP_RST_PANIC: return "PANIC_RESET";
+    case ESP_RST_INT_WDT: return "INT_WDT_RESET";
+    case ESP_RST_TASK_WDT: return "TASK_WDT_RESET";
+    case ESP_RST_WDT: return "OTHER_WDT_RESET";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP_RESET";
+    case ESP_RST_BROWNOUT: return "BROWNOUT_RESET";
+    case ESP_RST_SDIO: return "SDIO_RESET";
+    default: return "UNKNOWN_RESET";
+  }
+}
+
+static String wifiModeText() {
+  switch (WiFi.getMode()) {
+    case WIFI_OFF: return "OFF";
+    case WIFI_STA: return "STA";
+    case WIFI_AP: return "AP";
+    case WIFI_AP_STA: return "AP+STA";
+    default: return "unbekannt";
+  }
+}
 
 static String htmlEscape(String s) {
   s.replace("&", "&amp;"); s.replace("<", "&lt;"); s.replace(">", "&gt;");
@@ -89,11 +130,14 @@ static void loadSettings() {
   Preferences p;
   p.begin("netconf", true);
 
-  // NVS has priority after the user has saved settings in the web UI.
-  // On a fresh device the defaults come from optional arduino_secrets.h.
-  wifiLoadedFromNvs = p.isKey("ssid");
-  wifiSsid = prefString(p, "ssid", UART_WIFI_SSID);
-  wifiPassword = prefString(p, "wifipw", UART_WIFI_PASSWORD);
+  // WLAN has two independent credential sources. Arduino secrets are the
+  // primary boot candidate when usable; a user-provisioned NVS network is
+  // retained as an independent fallback candidate.
+  wifiLoadedFromNvs = p.isKey("ssid") && prefString(p, "ssid", "").length();
+  nvsWifiSsid = prefString(p, "ssid", "");
+  nvsWifiPassword = prefString(p, "wifipw", "");
+  // For normal runtime settings, NVS remains authoritative. The values from
+  // arduino_secrets.h are used as defaults whenever an NVS key is absent.
   staticIp = prefString(p, "static_ip", UART_STATIC_IP);
   gatewayIp = prefString(p, "gateway", UART_GATEWAY_IP);
   subnetMask = prefString(p, "subnet", UART_SUBNET_MASK);
@@ -120,14 +164,14 @@ static void loadSettings() {
   if (heartbeatMs < 1000) heartbeatMs = 1000;
 
   Serial.printf("[CONFIG] arduino_secrets.h: %s\n", UART_ESP32_HAS_SECRETS ? "vorhanden" : "nicht vorhanden - sichere Defaults aktiv");
-  if (wifiLoadedFromNvs) Serial.println("[CONFIG] WLAN-Quelle: NVS");
-  else if (wifiSsid.length()) Serial.println("[CONFIG] WLAN-Quelle: arduino_secrets.h / Compile-Default");
-  else Serial.println("[CONFIG] Keine WLAN-Zugangsdaten - AP-Modus wird gestartet");
+  if (uartSecretTextUsable(UART_WIFI_SSID)) Serial.printf("[CONFIG] WLAN Primaer: arduino_secrets.h (%s)\n", UART_WIFI_SSID);
+  if (wifiLoadedFromNvs) Serial.printf("[CONFIG] WLAN Fallback: NVS (%s)\n", nvsWifiSsid.c_str());
+  if (!uartSecretTextUsable(UART_WIFI_SSID) && !wifiLoadedFromNvs) Serial.println("[CONFIG] Keine WLAN-Zugangsdaten - AP-Modus wird gestartet");
 }
 
 static void saveNetworkSettings() {
   Preferences p; p.begin("netconf", false);
-  p.putString("ssid", wifiSsid); p.putString("wifipw", wifiPassword);
+  p.putString("ssid", nvsWifiSsid); p.putString("wifipw", nvsWifiPassword);
   p.putString("static_ip", staticIp); p.putString("gateway", gatewayIp); p.putString("subnet", subnetMask);
   p.putString("ap_ssid", apSsid); p.putString("ap_pw", apPassword);
   p.putString("hostname", hostname); p.putString("ntp_server", ntpServer); p.end();
@@ -141,41 +185,280 @@ static void saveMqttSettings() {
   p.putULong("mqtt_hb_ms", heartbeatMs); p.end();
 }
 
-static void startFallbackAp() {
-  if (apActive) return;
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
-  if (apPassword.length() >= 8) WiFi.softAP(apSsid.c_str(), apPassword.c_str());
-  else WiFi.softAP(apSsid.c_str());
-  apActive = true;
-  WiFi.scanDelete();
-  WiFi.scanNetworks(true, true);
-  Serial.printf("[WIFI] Fallback AP: %s, IP %s\n", apSsid.c_str(), WiFi.softAPIP().toString().c_str());
+struct WifiCandidate {
+  String ssid;
+  String password;
+  String source;
+};
+
+static bool secretWifiAvailable() {
+  return UART_SECRET_HAS_WIFI_SSID && uartSecretTextUsable(UART_WIFI_SSID);
 }
 
-static void connectWifi(bool waitForConnection) {
+static bool nvsWifiAvailable() {
+  return UART_WIFI_ALLOW_NVS_FALLBACK && nvsWifiSsid.length();
+}
+
+static bool wifiCandidatesDuplicate() {
+  return secretWifiAvailable() && nvsWifiAvailable() &&
+         nvsWifiSsid == String(UART_WIFI_SSID) &&
+         nvsWifiPassword == (uartSecretTextUsable(UART_WIFI_PASSWORD) ? String(UART_WIFI_PASSWORD) : String());
+}
+
+static uint8_t wifiCandidateCount() {
+  uint8_t count = secretWifiAvailable() ? 1 : 0;
+  if (nvsWifiAvailable() && !wifiCandidatesDuplicate()) ++count;
+  return count;
+}
+
+static bool wifiCandidateAt(uint8_t index, WifiCandidate& out) {
+  const bool secretOk = secretWifiAvailable();
+  const bool nvsOk = nvsWifiAvailable() && !wifiCandidatesDuplicate();
+
+  auto assignSecret = [&out]() {
+    out.ssid = UART_WIFI_SSID;
+    out.password = uartSecretTextUsable(UART_WIFI_PASSWORD) ? String(UART_WIFI_PASSWORD) : String();
+    out.source = "arduino_secrets.h";
+  };
+  auto assignNvs = [&out]() {
+    out.ssid = nvsWifiSsid;
+    out.password = nvsWifiPassword;
+    out.source = "NVS";
+  };
+
+  if (UART_WIFI_PREFER_SECRETS) {
+    if (secretOk) { if (index == 0) { assignSecret(); return true; } --index; }
+    if (nvsOk && index == 0) { assignNvs(); return true; }
+  } else {
+    if (nvsOk) { if (index == 0) { assignNvs(); return true; } --index; }
+    if (secretOk && index == 0) { assignSecret(); return true; }
+  }
+  return false;
+}
+
+static bool setWifiModeRobust(wifi_mode_t desired) {
+  if (WiFi.getMode() == desired) return true;
+  for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+    if (WiFi.mode(desired)) {
+      delay(100);
+      return true;
+    }
+    Serial.printf("[WIFI] Modus %d fehlgeschlagen, Recovery %u/3\n", (int)desired, (unsigned)(attempt + 1));
+    WiFi.mode(WIFI_OFF);
+    delay(250);
+  }
+  return false;
+}
+
+static void applyIpConfig(bool forceDhcp) {
+  IPAddress ip, gw, mask;
+  const bool haveStatic = validIp(staticIp, ip) && validIp(gatewayIp, gw) && validIp(subnetMask, mask);
+  if (!forceDhcp && haveStatic) {
+    if (WiFi.config(ip, gw, mask)) Serial.printf("[WIFI] IP-Konfiguration: statisch %s\n", ip.toString().c_str());
+    else Serial.println("[WIFI] Statische IP fehlgeschlagen - DHCP wird verwendet");
+  } else {
+    IPAddress none(0, 0, 0, 0);
+    WiFi.config(none, none, none);
+    if (forceDhcp && haveStatic) Serial.println("[WIFI] Fallback: DHCP statt statischer IP");
+  }
+}
+
+static String emergencyApSsid() {
+  String id = chipId();
+  if (id.length() > 4) id = id.substring(id.length() - 4);
+  return String(UART_EMERGENCY_AP_PREFIX) + "-" + id;
+}
+
+static bool startFallbackAp() {
+  if (apActive && (WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_AP)) return true;
+
+  bool modeOk = setWifiModeRobust(WIFI_AP_STA);
+  apOnlyRecovery = false;
+  if (!modeOk) {
+    Serial.println("[WIFI] AP+STA nicht verfuegbar - versuche reinen AP-Modus");
+    modeOk = setWifiModeRobust(WIFI_AP);
+    apOnlyRecovery = modeOk;
+  }
+  if (!modeOk) {
+    Serial.println("[WIFI] FEHLER: WLAN-AP-Modus konnte nicht aktiviert werden");
+    return false;
+  }
+
+  WiFi.softAPdisconnect(false);
+  delay(80);
+  WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
+
+  bool ok = false;
+  if (apPassword.length() >= 8) ok = WiFi.softAP(apSsid.c_str(), apPassword.c_str());
+  else {
+    if (apPassword.length()) Serial.println("[WIFI] AP-Passwort < 8 Zeichen - starte AP offen");
+    ok = WiFi.softAP(apSsid.c_str());
+  }
+
+  if (!ok && apPassword.length() >= 8) {
+    Serial.println("[WIFI] Geschuetzter AP fehlgeschlagen - versuche denselben AP offen");
+    ok = WiFi.softAP(apSsid.c_str());
+  }
+
+  if (!ok && UART_WIFI_ALLOW_EMERGENCY_AP) {
+    String emergency = emergencyApSsid();
+    Serial.printf("[WIFI] Konfigurierter AP fehlgeschlagen - Emergency-AP: %s\n", emergency.c_str());
+    WiFi.softAPdisconnect(true);
+    delay(100);
+    ok = WiFi.softAP(emergency.c_str());
+    if (ok) apSsid = emergency;
+  }
+
+  apActive = ok;
+  if (ok) {
+    Serial.printf("[WIFI] Fallback AP: %s, IP %s, Modus %s\n", apSsid.c_str(), WiFi.softAPIP().toString().c_str(), wifiModeText().c_str());
+    if (WiFi.getMode() == WIFI_AP_STA) {
+      WiFi.scanDelete();
+      WiFi.scanNetworks(true, true);
+    }
+  } else Serial.println("[WIFI] FEHLER: Auch Emergency-AP konnte nicht gestartet werden");
+  return ok;
+}
+
+static void stopFallbackAp() {
+  if (!apActive) return;
+  WiFi.softAPdisconnect(true);
+  apActive = false;
+  apOnlyRecovery = false;
+  apShutdownAt = 0;
+  Serial.println("[WIFI] Fallback-AP nach erfolgreicher STA-Verbindung beendet");
+}
+
+static bool beginWifiAttempt(const WifiCandidate& candidate, bool forceDhcp) {
+  wifi_mode_t wantedMode = apActive ? WIFI_AP_STA : WIFI_STA;
+  if (!setWifiModeRobust(wantedMode)) {
+    Serial.println("[WIFI] Station-Modus konnte nicht aktiviert werden");
+    return false;
+  }
+  WiFi.setHostname(hostname.c_str());
+  applyIpConfig(forceDhcp);
+  WiFi.disconnect(false, false);
+  delay(80);
+  WiFi.begin(candidate.ssid.c_str(), candidate.password.c_str());
+  pendingWifiSource = candidate.source;
+  pendingWifiSsid = candidate.ssid;
+  pendingWifiForceDhcp = forceDhcp;
+  wifiAttemptActive = true;
+  wifiAttemptStarted = millis();
+  lastWifiTry = millis();
+  ++wifiReconnectCount;
+  Serial.printf("[WIFI] Verbindungsversuch %lu: %s (%s)%s\n", (unsigned long)wifiReconnectCount, candidate.ssid.c_str(), candidate.source.c_str(), forceDhcp ? " [DHCP-Fallback]" : "");
+  return true;
+}
+
+static void markWifiConnected() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  wifiAttemptActive = false;
+  wifiFailureCount = 0;
+  wifiDisconnectedSince = 0;
+  if (pendingWifiSource.length()) {
+    activeWifiSource = pendingWifiSource;
+  } else if (!activeWifiSource.length() || activeWifiSource == "keine") {
+    activeWifiSource = "bereits verbunden";
+  }
+  wifiDhcpFallback = pendingWifiForceDhcp;
+  Serial.printf("[WIFI] Verbunden: %s, SSID %s, Quelle %s, RSSI %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.SSID().c_str(), activeWifiSource.c_str(), WiFi.RSSI());
+  pendingWifiSource = "";
+  pendingWifiSsid = "";
+  if (apActive && !UART_AP_KEEP_AFTER_CONNECT) apShutdownAt = millis() + UART_AP_SHUTDOWN_DELAY_MS;
+}
+
+static bool connectWifiInitial() {
   WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(false);
   WiFi.setHostname(hostname.c_str());
 
+  const uint8_t candidates = wifiCandidateCount();
+  if (!candidates) {
+    startFallbackAp();
+    return false;
+  }
+
   IPAddress ip, gw, mask;
-  if (validIp(staticIp, ip) && validIp(gatewayIp, gw) && validIp(subnetMask, mask)) {
-    WiFi.config(ip, gw, mask);
+  const bool staticConfigured = validIp(staticIp, ip) && validIp(gatewayIp, gw) && validIp(subnetMask, mask);
+  const uint8_t phases = (staticConfigured && UART_WIFI_ALLOW_DHCP_FALLBACK) ? 2 : 1;
+
+  for (uint8_t phase = 0; phase < phases; ++phase) {
+    const bool forceDhcp = staticConfigured && phase == 1;
+    for (uint8_t i = 0; i < candidates; ++i) {
+      WifiCandidate candidate;
+      if (!wifiCandidateAt(i, candidate)) continue;
+      if (!beginWifiAttempt(candidate, forceDhcp)) continue;
+      const unsigned long started = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - started < UART_WIFI_CONNECT_TIMEOUT_MS) {
+        delay(250);
+        Serial.print('.');
+      }
+      Serial.println();
+      if (WiFi.status() == WL_CONNECTED) {
+        wifiDhcpFallback = forceDhcp;
+        nextWifiCandidate = (uint8_t)((i + 1) % candidates);
+        markWifiConnected();
+        return true;
+      }
+      wifiAttemptActive = false;
+      ++wifiFailureCount;
+      Serial.printf("[WIFI] Verbindung fehlgeschlagen: %s (%s)\n", candidate.ssid.c_str(), candidate.source.c_str());
+    }
   }
 
-  if (wifiSsid.length() == 0) { startFallbackAp(); return; }
-  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
-  lastWifiTry = millis();
+  Serial.println("[WIFI] Alle Client-Fallbacks fehlgeschlagen - starte Provisionierungs-AP");
+  startFallbackAp();
+  wifiDisconnectedSince = millis();
+  return false;
+}
 
-  if (waitForConnection) {
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 20000UL) { delay(250); Serial.print('.'); }
-    Serial.println();
-  }
-
+static void serviceWifi() {
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[WIFI] Verbunden: %s\n", WiFi.localIP().toString().c_str());
-  } else startFallbackAp();
+    if (wifiAttemptActive || wifiDisconnectedSince) markWifiConnected();
+    if (apActive && !UART_AP_KEEP_AFTER_CONNECT && apShutdownAt && (long)(millis() - apShutdownAt) >= 0) stopFallbackAp();
+    return;
+  }
+
+  if (!wifiDisconnectedSince) wifiDisconnectedSince = millis();
+
+  if (!apActive && millis() - wifiDisconnectedSince >= UART_WIFI_AP_START_AFTER_MS) startFallbackAp();
+
+  if (wifiAttemptActive) {
+    if (millis() - wifiAttemptStarted < UART_WIFI_CONNECT_TIMEOUT_MS) return;
+    wifiAttemptActive = false;
+    ++wifiFailureCount;
+    Serial.printf("[WIFI] Reconnect-Timeout fuer %s (%s), Fehlerzaehler %lu\n", pendingWifiSsid.c_str(), pendingWifiSource.c_str(), (unsigned long)wifiFailureCount);
+    pendingWifiSource = "";
+    pendingWifiSsid = "";
+    return;
+  }
+
+  // If AP+STA itself is unavailable, preserve the pure recovery AP instead of
+  // tearing it down every reconnect interval. A saved WLAN triggers reboot.
+  if (apOnlyRecovery && apActive) return;
+
+  const uint8_t candidates = wifiCandidateCount();
+  if (!candidates) {
+    if (!apActive) startFallbackAp();
+    return;
+  }
+
+  if (millis() - lastWifiTry < UART_WIFI_RECONNECT_INTERVAL_MS) return;
+
+  WifiCandidate candidate;
+  if (!wifiCandidateAt(nextWifiCandidate % candidates, candidate)) {
+    nextWifiCandidate = 0;
+    return;
+  }
+  nextWifiCandidate = (uint8_t)((nextWifiCandidate + 1) % candidates);
+  IPAddress ip, gw, mask;
+  const bool staticConfigured = validIp(staticIp, ip) && validIp(gatewayIp, gw) && validIp(subnetMask, mask);
+  bool forceDhcp = wifiDhcpFallback;
+  if (staticConfigured && UART_WIFI_ALLOW_DHCP_FALLBACK && !wifiDhcpFallback) {
+    forceDhcp = ((wifiFailureCount / candidates) % 2U) == 1U;
+  }
+  beginWifiAttempt(candidate, forceDhcp);
 }
 
 static void configureTime() {
@@ -275,14 +558,15 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
 static String mainPage() {
   String h = pageHead(FW_NAME);
   h += "<meta http-equiv='refresh' content='10'>";
-  h += "<h1>" + String(FW_NAME) + "</h1>";
+  h += "<h1>" + String(FW_NAME) + "</h1><p class='small'>Firmware " + String(FW_BUILD_VERSION) + " | Build " + String(__DATE__) + " " + String(__TIME__) + "</p>";
   h += "<fieldset><legend>System</legend><p><b>Chip:</b> ESP32-WROOM-32 / NodeMCU-32S</p>";
-  h += "<p><b>Zeit:</b> " + nowText() + "</p><p><b>Uptime:</b> " + String(millis()/1000UL) + " s</p>";
+  h += "<p><b>Resetgrund:</b> " + resetReasonText() + "</p><p><b>Zeit:</b> " + nowText() + "</p><p><b>Uptime:</b> " + String(millis()/1000UL) + " s</p>";
   h += "<p><b>ESP32 Temperatur:</b> " + String(espTemperature(),2) + " &deg;C</p></fieldset>";
   h += "<fieldset><legend>Netzwerk</legend><p><b>WLAN:</b> " + String(WiFi.status()==WL_CONNECTED ? "verbunden" : "nicht verbunden") + "</p>";
-  if (WiFi.status()==WL_CONNECTED) h += "<p><b>IP:</b> " + WiFi.localIP().toString() + " &nbsp; <b>RSSI:</b> " + String(WiFi.RSSI()) + " dBm</p>";
+  h += "<p><b>Modus:</b> " + wifiModeText() + " &nbsp; <b>Quelle:</b> " + htmlEscape(activeWifiSource) + "</p>";
+  if (WiFi.status()==WL_CONNECTED) h += "<p><b>SSID:</b> " + htmlEscape(WiFi.SSID()) + "<br><b>IP:</b> " + WiFi.localIP().toString() + " &nbsp; <b>RSSI:</b> " + String(WiFi.RSSI()) + " dBm</p>";
   if (apActive) h += "<p><b>Fallback-AP:</b> " + htmlEscape(apSsid) + " / " + WiFi.softAPIP().toString() + "</p>";
-  h += "</fieldset>";
+  h += "<p><b>Reconnects:</b> " + String(wifiReconnectCount) + " &nbsp; <b>Fehler:</b> " + String(wifiFailureCount) + "</p></fieldset>";
   h += "<fieldset><legend>MQTT</legend><p><b>Status:</b> " + mqtt.getLastStatus() + "</p><p class='mono'><b>Basis:</b> " + htmlEscape(mqttTopicBase) + "</p></fieldset>";
   h += "<fieldset><legend>Batterie fuer Deep Sleep</legend><p><b>Status:</b> " + battery.status + "</p>";
   if (battery.valid) h += "<p><b>Spannung:</b> " + String(battery.voltage,3) + " V</p>";
@@ -296,15 +580,22 @@ static String mainPage() {
 static String networkPage() {
   String h = pageHead("WLAN / NTP");
   h += "<h1>WLAN / NTP</h1>";
-  h += "<p class='small'>Prioritaet beim Start: gespeicherte NVS-Werte &gt; arduino_secrets.h &gt; Fallback-AP. Ein hier ausgewaehltes WLAN wird dauerhaft in NVS gespeichert.</p>";
+  h += "<fieldset><legend>Status</legend><p><b>Modus:</b> " + wifiModeText() + "</p><p><b>STA:</b> " + String(WiFi.status()==WL_CONNECTED ? "verbunden" : "getrennt") + "</p>";
+  h += "<p><b>Aktive Quelle:</b> " + htmlEscape(activeWifiSource) + "</p><p><b>Reconnect-Versuche:</b> " + String(wifiReconnectCount) + " &nbsp; <b>Fehler:</b> " + String(wifiFailureCount) + "</p>";
+  if (WiFi.status()==WL_CONNECTED) h += "<p><b>SSID:</b> " + htmlEscape(WiFi.SSID()) + "<br><b>IP:</b> " + WiFi.localIP().toString() + "<br><b>RSSI:</b> " + String(WiFi.RSSI()) + " dBm</p>";
+  if (apActive) h += "<p><b>AP:</b> " + htmlEscape(apSsid) + " / " + WiFi.softAPIP().toString() + "</p>";
+  h += "</fieldset>";
+  h += "<p class='small'>Boot-Fallback: 1) gueltige WLAN-Daten aus arduino_secrets.h (standardmaessig bevorzugt), 2) separat gespeichertes NVS-WLAN, 3) bei statischer IP zusaetzlicher DHCP-Versuch, 4) AP+STA-Provisionierung, 5) offener Emergency-AP falls der konfigurierte AP nicht startet.</p>";
 
   int scanState = WiFi.scanComplete();
-  if (scanState == WIFI_SCAN_FAILED) {
+  if (scanState == WIFI_SCAN_FAILED && WiFi.getMode() == WIFI_AP_STA) {
     WiFi.scanNetworks(true, true);
     scanState = WIFI_SCAN_RUNNING;
   }
 
-  h += "<form method='post' action='/save_network'><fieldset><legend>WLAN Client</legend>";
+  h += "<form method='post' action='/save_network'><fieldset><legend>WLAN Client / NVS-Fallback</legend>";
+  if (UART_SECRET_HAS_WIFI_SSID && uartSecretTextUsable(UART_WIFI_SSID)) h += "<p class='small'>arduino_secrets.h WLAN: <b>" + htmlEscape(String(UART_WIFI_SSID)) + "</b> (Primaerkandidat; Passwort wird nicht angezeigt)</p>";
+  if (nvsWifiSsid.length()) h += "<p class='small'>NVS WLAN: <b>" + htmlEscape(nvsWifiSsid) + "</b> (Fallback)</p>";
   h += "<label>Gefundene WLANs</label><select name='ssid_scan' onchange=\"if(this.value){document.getElementById('ssid_manual').value=this.value;}\"><option value=''>-- manuelle SSID verwenden --</option>";
   if (scanState >= 0) {
     for (int i = 0; i < scanState; ++i) {
@@ -317,13 +608,15 @@ static String networkPage() {
   }
   h += "</select>";
   if (scanState == WIFI_SCAN_RUNNING) h += "<p class='small'>WLAN-Scan laeuft. Seite in wenigen Sekunden neu laden.</p>";
-  else h += "<p class='small'><a href='/wifi_rescan'>WLANs neu scannen</a></p>";
+  else if (WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_STA) h += "<p class='small'><a href='/wifi_rescan'>WLANs neu scannen</a></p>";
+  else h += "<p class='small'>Scan im reinen AP-Recovery-Modus nicht verfuegbar; SSID kann manuell eingetragen werden.</p>";
 
-  h += "<label>SSID</label><input id='ssid_manual' name='ssid' value='"+htmlEscape(wifiSsid)+"'>";
+  h += "<label>SSID fuer NVS-Fallback</label><input id='ssid_manual' name='ssid' value='"+htmlEscape(nvsWifiSsid)+"'>";
   h += "<label>Passwort</label><input type='password' name='wifipw' placeholder='leer = bei gleicher SSID unveraendert'>";
   h += "<label>Statische IP (leer = DHCP)</label><input name='static_ip' value='"+htmlEscape(staticIp)+"'><label>Gateway</label><input name='gateway' value='"+htmlEscape(gatewayIp)+"'><label>Subnetz</label><input name='subnet' value='"+htmlEscape(subnetMask)+"'></fieldset>";
-  h += "<fieldset><legend>Fallback Access Point</legend><label>AP SSID</label><input name='ap_ssid' value='"+htmlEscape(apSsid)+"'><label>AP Passwort (leer = offen, sonst min. 8 Zeichen)</label><input type='password' name='ap_pw' placeholder='leer = unveraendert'></fieldset>";
-  h += "<fieldset><legend>System</legend><label>Hostname</label><input name='hostname' value='"+htmlEscape(hostname)+"'><label>NTP Server</label><input name='ntp_server' value='"+htmlEscape(ntpServer)+"'><p class='small'>Zeitzone: Deutschland (CET/CEST), Sommer-/Winterzeit automatisch.</p></fieldset><button type='submit'>In NVS speichern und neu starten</button></form><a class='btn' href='/'>Zurueck</a></div></body></html>";
+  h += "<fieldset><legend>Fallback Access Point</legend><label>AP SSID</label><input name='ap_ssid' value='"+htmlEscape(apSsid)+"'><label>AP Passwort (leer = offen, sonst min. 8 Zeichen)</label><input type='password' name='ap_pw' placeholder='leer = unveraendert'><p class='small'>Falls dieser AP nicht startet, verwendet die Firmware automatisch einen offenen Emergency-AP mit eindeutiger Chip-ID.</p></fieldset>";
+  h += "<fieldset><legend>System</legend><label>Hostname</label><input name='hostname' value='"+htmlEscape(hostname)+"'><label>NTP Server</label><input name='ntp_server' value='"+htmlEscape(ntpServer)+"'><p class='small'>Zeitzone: Deutschland (CET/CEST), Sommer-/Winterzeit automatisch.</p></fieldset><button type='submit'>NVS-Fallback speichern und neu starten</button></form>";
+  h += "<form method='post' action='/clear_wifi_nvs'><button type='submit'>Gespeichertes NVS-WLAN loeschen</button></form><a class='btn' href='/'>Zurueck</a></div></body></html>";
   return h;
 }
 
@@ -347,19 +640,31 @@ static String batteryPage() {
 static void registerRoutes() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",mainPage()); });
   server.on("/network", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",networkPage()); });
-  server.on("/wifi_rescan", HTTP_GET, [](AsyncWebServerRequest* r){ WiFi.scanDelete(); WiFi.scanNetworks(true, true); r->redirect("/network"); });
+  server.on("/wifi_rescan", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (WiFi.getMode() == WIFI_AP_STA || WiFi.getMode() == WIFI_STA) {
+      WiFi.scanDelete();
+      WiFi.scanNetworks(true, true);
+    }
+    r->redirect("/network");
+  });
   server.on("/save_network", HTTP_POST, [](AsyncWebServerRequest* r){
-    String oldSsid = wifiSsid;
+    String oldSsid = nvsWifiSsid;
     String selectedSsid = r->hasArg("ssid_scan") ? r->arg("ssid_scan") : String();
     selectedSsid.trim();
-    if (selectedSsid.length()) wifiSsid = selectedSsid;
-    else if (r->hasArg("ssid")) { wifiSsid = r->arg("ssid"); wifiSsid.trim(); }
-    if (r->hasArg("wifipw") && r->arg("wifipw").length()) wifiPassword=r->arg("wifipw");
-    else if (wifiSsid != oldSsid) wifiPassword = "";
+    if (selectedSsid.length()) nvsWifiSsid = selectedSsid;
+    else if (r->hasArg("ssid")) { nvsWifiSsid = r->arg("ssid"); nvsWifiSsid.trim(); }
+    if (r->hasArg("wifipw") && r->arg("wifipw").length()) nvsWifiPassword=r->arg("wifipw");
+    else if (nvsWifiSsid != oldSsid) nvsWifiPassword = "";
     if (r->hasArg("static_ip")) staticIp=r->arg("static_ip"); if (r->hasArg("gateway")) gatewayIp=r->arg("gateway"); if (r->hasArg("subnet")) subnetMask=r->arg("subnet");
     if (r->hasArg("ap_ssid")) apSsid=r->arg("ap_ssid"); if (r->hasArg("ap_pw") && r->arg("ap_pw").length()) apPassword=r->arg("ap_pw");
     if (r->hasArg("hostname")) hostname=r->arg("hostname"); if (r->hasArg("ntp_server")) ntpServer=r->arg("ntp_server");
     saveNetworkSettings(); r->send(200,"text/html; charset=utf-8",pageHead("Gespeichert")+"<h1>Gespeichert</h1><p>Neustart ...</p></div></body></html>"); delay(500); ESP.restart();
+  });
+  server.on("/clear_wifi_nvs", HTTP_POST, [](AsyncWebServerRequest* r){
+    Preferences p; p.begin("netconf", false); p.remove("ssid"); p.remove("wifipw"); p.end();
+    nvsWifiSsid = ""; nvsWifiPassword = "";
+    r->send(200,"text/html; charset=utf-8",pageHead("WLAN geloescht")+"<h1>NVS-WLAN geloescht</h1><p>Neustart ...</p></div></body></html>");
+    delay(500); ESP.restart();
   });
   server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",mqttPage()); });
   server.on("/save_mqtt", HTTP_POST, [](AsyncWebServerRequest* r){
@@ -388,13 +693,15 @@ static void registerRoutes() {
 
 void setup() {
   Serial.begin(115200); delay(200);
-  Serial.printf("\n%s\n", FW_NAME);
+  Serial.printf("\n%s %s\n", FW_NAME, FW_BUILD_VERSION);
+  Serial.printf("[BOOT] Build: %s %s\n", __DATE__, __TIME__);
+  Serial.printf("[BOOT] Resetgrund: %s (%d)\n", resetReasonText().c_str(), (int)esp_reset_reason());
   loadSettings();
   battery.load(); battery.begin(); battery.measure("boot");
   deepSleep.begin(); deepSleep.setBeforeSleepCallback(beforeSleep);
   ota.begin(otaPrefs);
 
-  connectWifi(true);
+  connectWifiInitial();
   configureTime();
 
   mqtt.begin(wifiClient); mqtt.setCallback(mqttCallback);
@@ -409,10 +716,7 @@ void setup() {
 void loop() {
   ota.loop(); mqtt.loop();
 
-  if (WiFi.status() != WL_CONNECTED && millis()-lastWifiTry >= 30000UL) {
-    lastWifiTry=millis();
-    if (wifiSsid.length() != 0) { WiFi.begin(wifiSsid.c_str(),wifiPassword.c_str()); startFallbackAp(); }
-  }
+  serviceWifi();
   if (WiFi.status()==WL_CONNECTED && !otaStarted) { configureTime(); ota.startArduinoOta(hostname); otaStarted=true; }
 
   if (mqttEnabled && millis()-lastMqttTry >= 5000UL) {
