@@ -2,13 +2,15 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.8
+## Stand v0.9
 
 
 
 
 **Erweiterung v0.8:** Die UART-Funktion ist jetzt in zwei getrennte Webbereiche aufgeteilt. `/uart` ist eine reine Live-Monitor-/Decoder-Seite; `/uart/settings` enthaelt ausschliesslich Betriebsart, Hardware-UART, GPIOs, Baudrate, Format, Feld-Aliase, Totzone und Kalibrierung. Raw- und Decoder-Modus laufen als Dauerbetrieb unabhaengig davon weiter, ob die Browserseite geoeffnet ist. Der gewaehlte Modus bleibt in NVS gespeichert und wird nach einem Neustart automatisch wieder gestartet. Der 512-Byte-Ringpuffer ueberschreibt im Dauerbetrieb nur die jeweils aeltesten Rohbytes.
 
+
+**Korrektur v0.9:** Die UART-Unterseiten werden jetzt eindeutig geroutet. Bei ESPAsyncWebServer 3.x konnte die zuerst registrierte Route `/uart` auch Anfragen an `/uart/settings` und `/uart/status` abfangen. Dadurch zeigte `/uart/settings` faelschlich die Monitorseite und die Live-API lieferte HTML statt JSON; Byte- und Paketzaehler blieben deshalb auf 0. Ab v0.9 werden `/uart/status`, `/uart/settings` und `/uart/monitor` zuerst registriert. `/uart` dient nur noch als kompatibler Redirect auf `/uart/monitor`. Die Monitorseite prueft den JSON-Content-Type und zeigt den Zustand der Status-API sichtbar an.
 **Erweiterung v0.7:** Zwei UART-Betriebsarten wurden ergaenzt: ein Raw-/Sniffer-Modus fuer unverarbeitete serielle Daten sowie ein Protokoll-Decoder gemaess der Messunterlage `ESP32_UART_Protokoll_Entschluesselung`. UART-Nummer, RX/TX-Pins, Baudrate und Format sind ueber `/uart` einstellbar und werden in NVS gespeichert. Fuer Feld 1 bis Feld 6 gibt es frei editierbare Aliasnamen, waehrend die feste technische Kennung `Feld N` immer sichtbar bleibt.
 
 **Buildfix v0.6:** In `markWifiConnected()` war die Zuweisung `wifiDhcpFallback = pendingWifiForceDhcp;` versehentlich zwischen einem `if` und dem zugehoerigen `else if` eingefuegt. Dadurch meldete GCC `else without a previous if`. Die Verzweigung ist jetzt korrekt geklammert und die DHCP-Fallback-Markierung wird erst nach der Quellenwahl gesetzt.
@@ -123,7 +125,7 @@ In `arduino_secrets.h` koennen optional folgende Werte gesetzt werden:
 
 ## UART Monitor / Protokoll-Decoder (v0.7)
 
-Die UART-Funktion besitzt ab v0.8 zwei getrennte Seiten: `http://<ESP-IP>/uart` fuer die reine Liveanzeige und `http://<ESP-IP>/uart/settings` fuer die Konfiguration. Die Funktion ist in drei Betriebsarten aufgeteilt:
+Die UART-Funktion besitzt ab v0.8 zwei getrennte Seiten: `http://<ESP-IP>/uart/monitor` fuer die reine Liveanzeige und `http://<ESP-IP>/uart/settings` fuer die Konfiguration. Die Funktion ist in drei Betriebsarten aufgeteilt:
 
 - **Aus** - keine zusaetzliche UART-Schnittstelle aktiv.
 - **Raw / Sniffer** - empfangene Bytes werden ungefiltert in einem Ringpuffer erfasst und im Webinterface als HEX und ASCII angezeigt.
@@ -151,9 +153,10 @@ Solange die Bedeutung nicht bestaetigt ist, kann das Alias-Feld leer bleiben ode
 
 | Route | Funktion |
 |---|---|
-| `/uart` | Reine UART-Liveansicht mit Decoderwerten und Raw-Puffer |
-| `/uart/settings` | UART-Konfiguration, Feld-Aliase und Kalibrierung |
 | `/uart/status` | Live-Status als JSON fuer die Monitorseite |
+| `/uart/settings` | UART-Konfiguration, Feld-Aliase und Kalibrierung |
+| `/uart/monitor` | Reine UART-Liveansicht mit Decoderwerten und Raw-Puffer |
+| `/uart` | Kompatibler Redirect auf `/uart/monitor` |
 | `/save_uart` | Einstellungen, Aliase und Kalibrierwerte speichern; UART neu starten |
 | `/uart_clear` | Rohdaten-Ringpuffer leeren |
 
@@ -193,8 +196,10 @@ Vor dem Anschließen bitte sicherstellen, dass die maximale Spannung am ADC-Pin 
 | `/network` | WLAN-Scan/Auswahl, AP, Hostname, NTP |
 | `/wifi_rescan` | WLAN-Scan neu starten |
 | `/clear_wifi_nvs` | gespeichertes NVS-WLAN löschen, POST |
-| `/uart` | UART Raw/Sniffer, Protokoll-Decoder, Feld-Aliase und Kalibrierung |
 | `/uart/status` | UART Live-Status als JSON |
+| `/uart/settings` | UART-Konfiguration, Feld-Aliase und Kalibrierung |
+| `/uart/monitor` | UART Raw/Sniffer und Protokoll-Decoder Liveanzeige |
+| `/uart` | Redirect auf `/uart/monitor` |
 | `/mqtt` | MQTT-Einstellungen / Verbindungstest |
 | `/battery` | ADC-Batteriemessung für Deep Sleep |
 | `/deepsleep` | Deep-Sleep-Konfiguration |

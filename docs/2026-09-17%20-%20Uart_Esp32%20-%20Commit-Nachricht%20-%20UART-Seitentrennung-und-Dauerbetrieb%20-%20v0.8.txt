@@ -1,0 +1,18 @@
+BL_Separate UART settings and continuous decoder monitor
+Date: 2026-09-17
+
+Summary:
+- Split the combined UART page into a dedicated live monitor at /uart and a dedicated configuration page at /uart/settings.
+- Keep Raw/Sniffer and protocol decoding active continuously in the ESP32 main loop, independent of an open browser page.
+- Keep the selected UART mode persistent in NVS so an active Raw or Decode mode starts again after reboot.
+- Clarified that the fixed-size raw ring buffer continuously overwrites only the oldest bytes while decoding continues.
+- Updated firmware version and project documentation to v0.8.
+
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/main.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.8.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.8.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.8.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - UART-Seitentrennung-und-Dauerbetrieb - v0.8.txt

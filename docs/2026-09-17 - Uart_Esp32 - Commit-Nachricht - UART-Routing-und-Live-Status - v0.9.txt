@@ -1,0 +1,18 @@
+BL_Fix UART subroute handling and live status
+Date: 2026-09-17
+Summary:
+- Fixed UART web route registration so /uart/settings and /uart/status are no longer intercepted by the shorter /uart route.
+- Added the dedicated /uart/monitor route and kept /uart only as a backward-compatible redirect.
+- Added no-cache headers for UART settings, monitor, and JSON status responses.
+- Added visible status-API diagnostics and Content-Type validation to the live UART monitor.
+- Initialized byte, packet, raw-field, and normalized-field values from the current runtime state before the first JavaScript refresh.
+- Bumped the firmware version to 0.9.0 and updated the project documentation.
+
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/main.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.9.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.9.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.9.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - UART-Routing-und-Live-Status - v0.9.txt

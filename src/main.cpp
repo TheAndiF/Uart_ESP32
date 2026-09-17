@@ -596,7 +596,7 @@ static String mainPage() {
   h += "</fieldset>";
   h += "<fieldset><legend>Deep Sleep</legend><p><b>Aktiv:</b> " + String(deepSleep.isEnabled()?"ja":"nein") + "</p><p><b>Modus:</b> " + deepSleep.wakeupMode() + "</p><p><b>Naechster Wakeup:</b> " + deepSleep.nextWakeupText() + "</p></fieldset>";
   h += "<fieldset><legend>UART</legend><p><b>Modus:</b> " + htmlEscape(uartMonitor.modeText()) + "</p><p><b>Status:</b> " + htmlEscape(uartMonitor.status()) + "</p><p><b>Empfangene Bytes:</b> " + String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)) + "</p></fieldset>";
-  h += "<a class='btn' href='/uart'>UART Monitor / Decoder</a><a class='btn' href='/uart/settings'>UART Einstellungen</a><a class='btn' href='/network'>WLAN / NTP</a><a class='btn' href='/mqtt'>MQTT</a><a class='btn' href='/battery'>Batterie / ADC</a><a class='btn' href='/deepsleep'>Deep Sleep</a><a class='btn' href='/ota'>OTA Update</a>";
+  h += "<a class='btn' href='/uart/monitor'>UART Monitor / Decoder</a><a class='btn' href='/uart/settings'>UART Einstellungen</a><a class='btn' href='/network'>WLAN / NTP</a><a class='btn' href='/mqtt'>MQTT</a><a class='btn' href='/battery'>Batterie / ADC</a><a class='btn' href='/deepsleep'>Deep Sleep</a><a class='btn' href='/ota'>OTA Update</a>";
   h += "<form method='post' action='/reboot'><button type='submit'>ESP32 neu starten</button></form></div></body></html>";
   return h;
 }
@@ -648,23 +648,26 @@ static String uartMonitorPage() {
   String h = pageHead("UART Monitor / Decoder");
   h += "<h1>UART Monitor / Decoder</h1>";
   h += "<p class='small'>Diese Seite ist nur fuer die Liveanzeige. Der UART-Empfang und die Dekodierung laufen im Hintergrund dauerhaft weiter, solange der gespeicherte Modus <b>Raw / Sniffer</b> oder <b>Protokoll-Decoder</b> aktiv ist. Die Seite muss dafuer nicht geoeffnet bleiben.</p>";
-  h += "<fieldset><legend>Live-Status</legend><p><b>Status:</b> <span id='uart_status'>" + htmlEscape(uartMonitor.status()) + "</span></p><p><b>Bytes seit Start / Puffer-Reset:</b> <span id='uart_bytes'>0</span></p>";
+  h += "<fieldset><legend>Live-Status</legend><p><b>Status:</b> <span id='uart_status'>" + htmlEscape(uartMonitor.status()) + "</span></p><p><b>Status-API:</b> <span id='uart_api'>warte auf /uart/status ...</span></p><p><b>Bytes seit Start / Puffer-Reset:</b> <span id='uart_bytes'>" + String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)) + "</span></p>";
   h += "<table class='tbl'><tr><th>Technisches Feld</th><th>Alias</th><th>Rohwert</th><th>Normiert</th></tr>";
   for (uint8_t i=0;i<6;++i) {
     String alias = uartMonitor.fieldAlias(i); if (!alias.length()) alias = "-";
-    h += "<tr><td><b>Feld " + String(i+1) + "</b></td><td>" + htmlEscape(alias) + "</td><td id='raw" + String(i+1) + "'>-</td><td id='norm" + String(i+1) + "'>" + String(i<5?"-":"nicht normiert") + "</td></tr>";
+    const String initialRaw = uartMonitor.hasMainPacket() ? String(uartMonitor.rawField(i)) : String("-");
+    String initialNorm = "nicht normiert";
+    if (i < 5) initialNorm = uartMonitor.hasMainPacket() ? String(uartMonitor.normalizedField(i), 3) : String("-");
+    h += "<tr><td><b>Feld " + String(i+1) + "</b></td><td>" + htmlEscape(alias) + "</td><td id='raw" + String(i+1) + "'>" + initialRaw + "</td><td id='norm" + String(i+1) + "'>" + initialNorm + "</td></tr>";
   }
-  h += "</table><p><b>Pakete:</b> <span id='pkt'>0</span> &nbsp; <b>gueltig:</b> <span id='pkt_ok'>0</span> &nbsp; <b>ungueltig:</b> <span id='pkt_bad'>0</span> &nbsp; <b>0x10/0x15:</b> <span id='pkt_main'>0</span></p></fieldset>";
+  h += "</table><p><b>Pakete:</b> <span id='pkt'>" + String(uartMonitor.packetCount()) + "</span> &nbsp; <b>gueltig:</b> <span id='pkt_ok'>" + String(uartMonitor.validPacketCount()) + "</span> &nbsp; <b>ungueltig:</b> <span id='pkt_bad'>" + String(uartMonitor.invalidPacketCount()) + "</span> &nbsp; <b>0x10/0x15:</b> <span id='pkt_main'>" + String(uartMonitor.mainPacketCount()) + "</span></p></fieldset>";
   h += "<fieldset><legend>Letzte Rohdaten</legend><p class='small'>Der interne Ringpuffer laeuft ohne feste Laufzeitbegrenzung weiter und ueberschreibt nur die jeweils aeltesten Bytes. Angezeigt werden maximal die letzten 256 Bytes des 512-Byte-Puffers.</p><b>HEX</b><pre class='raw' id='raw_hex'>" + htmlEscape(uartMonitor.rawHex(256)) + "</pre><b>ASCII</b><pre class='raw' id='raw_ascii'>" + htmlEscape(uartMonitor.rawAscii(256)) + "</pre></fieldset>";
   h += "<form method='post' action='/uart_clear'><button type='submit'>Rohdatenpuffer / Bytezaehler leeren</button></form>";
   h += "<a class='btn' href='/uart/settings'>UART-Einstellungen</a><a class='btn' href='/'>Zurueck</a>";
   h += R"rawliteral(<script>
-async function updateUart(){try{const r=await fetch('/uart/status',{cache:'no-store'});if(!r.ok)return;const d=await r.json();
-document.getElementById('uart_status').textContent=d.status;document.getElementById('uart_bytes').textContent=d.total_bytes;
+async function updateUart(){const api=document.getElementById('uart_api');try{const r=await fetch('/uart/status',{cache:'no-store'});const ct=r.headers.get('content-type')||'';if(!r.ok||!ct.includes('application/json')){api.textContent='FEHLER: '+r.status+' / '+ct;return;}const d=await r.json();
+api.textContent='OK';document.getElementById('uart_status').textContent=d.status;document.getElementById('uart_bytes').textContent=d.total_bytes;
 document.getElementById('raw_hex').textContent=d.raw_hex;document.getElementById('raw_ascii').textContent=d.raw_ascii;
 document.getElementById('pkt').textContent=d.packets;document.getElementById('pkt_ok').textContent=d.valid;document.getElementById('pkt_bad').textContent=d.invalid;document.getElementById('pkt_main').textContent=d.main;
 if(d.fields){for(let i=0;i<d.fields.length;i++){const n=i+1;document.getElementById('raw'+n).textContent=d.has_main?d.fields[i].raw:'-';if(i<5)document.getElementById('norm'+n).textContent=d.has_main?Number(d.fields[i].norm).toFixed(3):'-';}}
-}catch(e){}}setInterval(updateUart,1000);updateUart();
+}catch(e){api.textContent='FEHLER: '+e;}}setInterval(updateUart,1000);updateUart();
 </script>)rawliteral";
   h += "</div></body></html>";
   return h;
@@ -700,7 +703,7 @@ static String uartSettingsPage() {
   }
   h += "</table></fieldset><button type='submit'>UART-Einstellungen speichern / UART neu starten</button></form>";
   h += "<fieldset><legend>Aktueller Zustand</legend><p><b>Modus:</b> " + htmlEscape(uartMonitor.modeText()) + "</p><p><b>Status:</b> " + htmlEscape(uartMonitor.status()) + "</p><p class='small'>Die Einstellungen werden in NVS gespeichert. Ein aktiver Raw- oder Decoder-Modus wird nach einem normalen Neustart automatisch wieder gestartet.</p></fieldset>";
-  h += "<a class='btn' href='/uart'>Zum UART Monitor</a><a class='btn' href='/'>Zurueck</a></div></body></html>";
+  h += "<a class='btn' href='/uart/monitor'>Zum UART Monitor</a><a class='btn' href='/'>Zurueck</a></div></body></html>";
   return h;
 }
 
@@ -750,14 +753,26 @@ static void registerRoutes() {
     r->send(200,"text/html; charset=utf-8",pageHead("WLAN geloescht")+"<h1>NVS-WLAN geloescht</h1><p>Neustart ...</p></div></body></html>");
     delay(500); ESP.restart();
   });
-  server.on("/uart", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",uartMonitorPage()); });
-  server.on("/uart/settings", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",uartSettingsPage()); });
+  // IMPORTANT: ESPAsyncWebServer 3.x may match a shorter path before a more specific
+  // sub-route. Register all /uart/* routes before the /uart compatibility redirect.
   server.on("/uart/status", HTTP_GET, [](AsyncWebServerRequest* r){
     AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.statusJson());
-    resp->addHeader("Cache-Control", "no-store");
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     r->send(resp);
   });
-  server.on("/uart_clear", HTTP_POST, [](AsyncWebServerRequest* r){ uartMonitor.clearRaw(); r->redirect("/uart"); });
+  server.on("/uart/settings", HTTP_GET, [](AsyncWebServerRequest* r){
+    AsyncWebServerResponse* resp = r->beginResponse(200, "text/html; charset=utf-8", uartSettingsPage());
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    r->send(resp);
+  });
+  server.on("/uart/monitor", HTTP_GET, [](AsyncWebServerRequest* r){
+    AsyncWebServerResponse* resp = r->beginResponse(200, "text/html; charset=utf-8", uartMonitorPage());
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    r->send(resp);
+  });
+  server.on("/uart_clear", HTTP_POST, [](AsyncWebServerRequest* r){ uartMonitor.clearRaw(); r->redirect("/uart/monitor"); });
+  // Backward-compatible entry point. Keep this AFTER the specific /uart/* routes.
+  server.on("/uart", HTTP_GET, [](AsyncWebServerRequest* r){ r->redirect("/uart/monitor"); });
   server.on("/save_uart", HTTP_POST, [](AsyncWebServerRequest* r){
     if (r->hasArg("mode")) uartMonitor.setMode((UartManager::Mode)r->arg("mode").toInt());
     if (r->hasArg("uartno")) uartMonitor.setUartNumber((uint8_t)r->arg("uartno").toInt());
