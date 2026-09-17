@@ -2,7 +2,9 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.9
+## Stand v0.12
+
+**Neu v0.12:** Der Decoder wurde auf die st10-Spezifikation umgestellt. Er validiert jetzt den aeusseren Frame `FF FB Route OuterLength`, den inneren Frame `FF FD/FE InnerLength Command DATA XOR`, die Laengenbeziehung `OuterLength = InnerLength + 4` sowie die XOR-Pruefsumme ab `InnerLength` bis zum letzten Datenbyte. Bekannte Commands `0x0021`, `0x0023`, `0x0031` und `0x0033` werden getrennt gezaehlt und dekodiert. Die bisherigen Felder 1..6 stammen nun explizit aus Command `0x0021`; Feld 1..5 bleiben kalibrier-/normierbar. Der vorhandene Feld-5-TX-Replay bleibt erhalten, ist aber als experimentell markiert, weil st10 fuer D4/RX des Zielgeraets noch kein gueltiges Eingangsprotokoll belegt.
 
 
 
@@ -10,6 +12,13 @@ Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 **Erweiterung v0.8:** Die UART-Funktion ist jetzt in zwei getrennte Webbereiche aufgeteilt. `/uart` ist eine reine Live-Monitor-/Decoder-Seite; `/uart/settings` enthaelt ausschliesslich Betriebsart, Hardware-UART, GPIOs, Baudrate, Format, Feld-Aliase, Totzone und Kalibrierung. Raw- und Decoder-Modus laufen als Dauerbetrieb unabhaengig davon weiter, ob die Browserseite geoeffnet ist. Der gewaehlte Modus bleibt in NVS gespeichert und wird nach einem Neustart automatisch wieder gestartet. Der 512-Byte-Ringpuffer ueberschreibt im Dauerbetrieb nur die jeweils aeltesten Rohbytes.
 
 
+
+**Neu v0.10:** Auf der UART-Monitorseite gibt es jetzt explizite **START**- und **STOP**-Schaltflaechen. STOP beendet den aktuellen Hardware-UART-Empfang und Decoder sofort, ohne den gespeicherten Modus, Pins, Baudrate, Aliase oder Kalibrierwerte zu veraendern. START initialisiert die Schnittstelle mit der gespeicherten Konfiguration erneut. Ein manueller STOP ist nur ein Laufzeitzustand und wird nicht in NVS gespeichert; nach einem ESP32-Neustart startet ein gespeicherter Raw-/Decoder-Modus daher wieder automatisch.
+
+
+**Neu v0.11:** Der UART-Monitor besitzt jetzt einen gezielten TX-Replay-Test fuer **Feld 5**. Voraussetzung ist ein laufender Protokoll-Decoder, ein konfigurierter TX-GPIO und mindestens ein frisch empfangenes gueltiges `0x0021`-Paket. Beim Ausloesen wird dieses letzte Hauptpaket eingefroren, nur Feld 5 mit der vorhandenen Kalibrierung auf `-0,5` oder `+0,5` zurueckgerechnet, die XOR-Pruefsumme neu gebildet und die Paketkopie fuer ca. **1 Sekunde mit 50 Hz** gesendet. Die Sendeausgabe ist nicht blockierend; RX und Decoder laufen parallel weiter.
+
+Der Sendebereich ist absichtlich auf diese zwei Testwerte begrenzt. Ohne gueltige Paketvorlage oder ohne TX-Pin bleiben die Buttons deaktiviert. Nach UART-START bzw. einer Konfigurationsaenderung muss zuerst wieder ein frisches gueltiges Hauptpaket empfangen werden, bevor TX freigegeben wird.
 **Korrektur v0.9:** Die UART-Unterseiten werden jetzt eindeutig geroutet. Bei ESPAsyncWebServer 3.x konnte die zuerst registrierte Route `/uart` auch Anfragen an `/uart/settings` und `/uart/status` abfangen. Dadurch zeigte `/uart/settings` faelschlich die Monitorseite und die Live-API lieferte HTML statt JSON; Byte- und Paketzaehler blieben deshalb auf 0. Ab v0.9 werden `/uart/status`, `/uart/settings` und `/uart/monitor` zuerst registriert. `/uart` dient nur noch als kompatibler Redirect auf `/uart/monitor`. Die Monitorseite prueft den JSON-Content-Type und zeigt den Zustand der Status-API sichtbar an.
 **Erweiterung v0.7:** Zwei UART-Betriebsarten wurden ergaenzt: ein Raw-/Sniffer-Modus fuer unverarbeitete serielle Daten sowie ein Protokoll-Decoder gemaess der Messunterlage `ESP32_UART_Protokoll_Entschluesselung`. UART-Nummer, RX/TX-Pins, Baudrate und Format sind ueber `/uart` einstellbar und werden in NVS gespeichert. Fuer Feld 1 bis Feld 6 gibt es frei editierbare Aliasnamen, waehrend die feste technische Kennung `Feld N` immer sichtbar bleibt.
 

@@ -1,0 +1,21 @@
+BL_Add UART runtime start stop controls
+Date: 2026-09-17
+
+Summary:
+- Added explicit START and STOP controls to the UART monitor page.
+- STOP shuts down the active hardware UART and decoder without changing the saved UART mode or NVS configuration.
+- START reinitializes the configured UART and resumes Raw/Sniffer or Protocol Decoder operation.
+- Kept manual stop as a runtime-only state so a saved active mode starts automatically again after an ESP32 reboot.
+- Added runtime button-state handling via the existing /uart/status JSON API.
+- Bumped the firmware version to 0.10.0 and updated the project documentation.
+
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.10.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.10.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.10.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - UART-Start-Stop - v0.10.txt

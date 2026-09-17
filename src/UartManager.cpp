@@ -69,18 +69,11 @@ void UartManager::begin() {
   restart();
 }
 
-bool UartManager::restart() {
-  if (_serial) {
-    _serial->end();
-    delay(5);
-  }
-  _serial = nullptr;
-  _running = false;
-  resetParser();
-
+bool UartManager::start() {
+  if (_running) return true;
   if (_mode == Mode::Off) {
-    _status = "deaktiviert";
-    return true;
+    _status = "deaktiviert - Modus Aus";
+    return false;
   }
   if (!validPins()) {
     _status = "ungueltige GPIO-Konfiguration";
@@ -91,6 +84,11 @@ bool UartManager::restart() {
     return false;
   }
 
+  resetParser();
+  _hasLastMainPacketCopy = false;
+  _txActive = false;
+  _txPacketCount = 0;
+  _txStatus = (_txPin >= 0) ? String("warte auf gueltiges 0x0021-Paket") : String("nicht bereit: TX GPIO ist deaktiviert");
   _serial = (_uartNumber == 1) ? &_uart1 : &_uart2;
   _serial->begin(_baud, serialConfig(), _rxPin, _txPin);
   _running = true;
@@ -99,6 +97,29 @@ bool UartManager::restart() {
   _status += ", " + String(_baud) + " " + _frame;
   Serial.printf("[UART] %s\n", _status.c_str());
   return true;
+}
+
+void UartManager::stop() {
+  _txActive = false;
+  if (_serial) {
+    _serial->end();
+    delay(5);
+  }
+  _serial = nullptr;
+  _running = false;
+  resetParser();
+  if (_txStatus.startsWith("sendet")) _txStatus = "gestoppt";
+  _status = (_mode == Mode::Off) ? String("deaktiviert") : modeText() + " gestoppt";
+  Serial.printf("[UART] %s\n", _status.c_str());
+}
+
+bool UartManager::restart() {
+  stop();
+  if (_mode == Mode::Off) {
+    _status = "deaktiviert";
+    return true;
+  }
+  return start();
 }
 
 void UartManager::loop() {
@@ -112,6 +133,7 @@ void UartManager::loop() {
     ++_totalBytes;
     if (_mode == Mode::Decode) processDecoderByte(b);
   }
+  serviceTxReplay();
 }
 
 String UartManager::modeText() const {
@@ -245,34 +267,97 @@ void UartManager::processDecoderByte(uint8_t value) {
 
 void UartManager::handlePacket(size_t packetLength) {
   ++_packetCount;
-  _lastPacketType = _packet[2];
-  _lastPacketLength = _packet[3];
   _lastPacketMillis = millis();
+  _lastRoute = packetLength >= 3U ? _packet[2] : 0;
+  _lastOuterLength = packetLength >= 4U ? _packet[3] : 0;
+  _lastInnerType = 0;
+  _lastInnerLength = 0;
+  _lastCommand = 0;
+  _lastDataLength = 0;
+  _lastChecksumOk = false;
 
-  uint8_t cs = 0;
-  if (packetLength <= 7U) {
-    _lastChecksumOk = false;
-  } else {
-    for (size_t i = 6; i + 1U < packetLength; ++i) cs ^= _packet[i];
-    _lastChecksumOk = (cs == _packet[packetLength - 1U]);
+  // st10: FF FB route outer_length [body with exactly outer_length bytes]
+  if (packetLength < 11U || _lastOuterLength + 4U != packetLength) {
+    ++_invalidPacketCount;
+    return;
   }
 
+  // Inner frame must start with FF FD or FF FE.
+  if (_packet[4] != 0xFF || (_packet[5] != 0xFD && _packet[5] != 0xFE)) {
+    ++_invalidPacketCount;
+    return;
+  }
+  _lastInnerType = _packet[5];
+
+  _lastInnerLength = (uint16_t)_packet[6] | ((uint16_t)_packet[7] << 8U);
+  if (_lastInnerLength < 3U || (uint16_t)(_lastInnerLength + 4U) != _lastOuterLength) {
+    ++_invalidPacketCount;
+    return;
+  }
+
+  _lastCommand = (uint16_t)_packet[8] | ((uint16_t)_packet[9] << 8U);
+  _lastDataLength = (uint16_t)(_lastInnerLength - 3U);
+  const size_t expectedDataEnd = 10U + (size_t)_lastDataLength;
+  if (expectedDataEnd + 1U != packetLength) {
+    ++_invalidPacketCount;
+    return;
+  }
+
+  // st10 checksum: XOR from InnerLength low byte through the final data byte.
+  uint8_t cs = 0;
+  for (size_t i = 6U; i + 1U < packetLength; ++i) cs ^= _packet[i];
+  _lastChecksumOk = (cs == _packet[packetLength - 1U]);
   if (!_lastChecksumOk) {
     ++_invalidPacketCount;
     return;
   }
-  ++_validPacketCount;
 
-  if (_lastPacketType == 0x10 && _lastPacketLength == 0x15 && packetLength == 25U) {
-    ++_mainPacketCount;
+  ++_validPacketCount;
+  const uint8_t* data = &_packet[10];
+
+  if (_lastCommand == 0x0021 && _lastDataLength == 14U && packetLength == 25U) {
+    ++_cmd0021Count;
     _hasMainPacket = true;
+    memcpy(_lastMainPacket, _packet, 25U);
+    const bool firstFreshTemplate = !_hasLastMainPacketCopy;
+    _hasLastMainPacketCopy = true;
+    if (firstFreshTemplate && !_txActive) {
+      _txStatus = (_txPin >= 0) ? String("bereit: gueltiges 0x0021-Paket vorhanden") : String("nicht bereit: TX GPIO ist deaktiviert");
+    }
+    // 0x0021 DATA: 2 meta bytes, then six uint16 little-endian fields.
     for (uint8_t i = 0; i < 6; ++i) {
-      const size_t pos = 12U + 2U * i;
-      _fields[i] = (uint16_t)_packet[pos] | ((uint16_t)_packet[pos + 1U] << 8U);
+      const size_t pos = 2U + 2U * i;
+      _fields[i] = (uint16_t)data[pos] | ((uint16_t)data[pos + 1U] << 8U);
     }
     for (uint8_t i = 0; i < 5; ++i) {
       _normalized[i] = applyDeadband(normalize(_fields[i], _cal[i]));
     }
+  }
+  else if (_lastCommand == 0x0023 && _lastDataLength == 11U) {
+    ++_cmd0023Count;
+    _has0023 = true;
+    _cmd0023Value1 = (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
+    _cmd0023Value2 = data[2];
+    _cmd0023Value3 = (uint16_t)data[3] | ((uint16_t)data[4] << 8U);
+  }
+  else if (_lastCommand == 0x0031 && _lastDataLength == 3U) {
+    ++_cmd0031Count;
+    _has0031 = true;
+    _cmd0031Value = (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
+    _cmd0031Status = data[2];
+  }
+  else if (_lastCommand == 0x0033 && _lastDataLength == 14U) {
+    ++_cmd0033Count;
+    _has0033 = true;
+    // st10: same structural form as 0x0021 (2 meta bytes + 6 x uint16 LE),
+    // but semantic ordering remains intentionally unnamed/open.
+    for (uint8_t i = 0; i < 6; ++i) {
+      const size_t pos = 2U + 2U * i;
+      _cmd0033Fields[i] = (uint16_t)data[pos] | ((uint16_t)data[pos + 1U] << 8U);
+    }
+  }
+  else {
+    ++_unknownCommandCount;
   }
 }
 
@@ -292,6 +377,96 @@ float UartManager::applyDeadband(float value) const {
   if (_deadband >= 0.999f) return 0.0f;
   const float sign = value < 0.0f ? -1.0f : 1.0f;
   return sign * (a - _deadband) / (1.0f - _deadband);
+}
+
+uint16_t UartManager::denormalize(float value, const Calibration& c) const {
+  if (value < -1.0f) value = -1.0f;
+  if (value > 1.0f) value = 1.0f;
+  float raw;
+  if (value < 0.0f) raw = (float)c.centerV + value * (float)((int32_t)c.centerV - (int32_t)c.minV);
+  else raw = (float)c.centerV + value * (float)((int32_t)c.maxV - (int32_t)c.centerV);
+  long rounded = lroundf(raw);
+  if (rounded < 0) rounded = 0;
+  if (rounded > 65535) rounded = 65535;
+  return (uint16_t)rounded;
+}
+
+void UartManager::updatePacketChecksum(uint8_t* packet, size_t packetLength) const {
+  if (!packet || packetLength < 7U) return;
+  uint8_t cs = 0;
+  for (size_t i = 6; i + 1U < packetLength; ++i) cs ^= packet[i];
+  packet[packetLength - 1U] = cs;
+}
+
+bool UartManager::txReady() const {
+  return _running && _serial && _mode == Mode::Decode && _txPin >= 0 && validTxPin(_txPin) && _hasLastMainPacketCopy;
+}
+
+bool UartManager::sendField5ForOneSecond(float normalizedValue) {
+  if (_txActive) {
+    _txStatus = "Senden bereits aktiv";
+    return false;
+  }
+  if (!_running || !_serial) {
+    _txStatus = "nicht bereit: UART ist gestoppt";
+    return false;
+  }
+  if (_mode != Mode::Decode) {
+    _txStatus = "nicht bereit: Protokoll-Decoder ist nicht aktiv";
+    return false;
+  }
+  if (_txPin < 0 || !validTxPin(_txPin)) {
+    _txStatus = "nicht bereit: gueltiger TX GPIO fehlt";
+    return false;
+  }
+  if (!_hasLastMainPacketCopy) {
+    _txStatus = "nicht bereit: noch kein gueltiges 0x0021-Paket empfangen";
+    return false;
+  }
+  if (!isfinite(normalizedValue) || normalizedValue < -1.0f || normalizedValue > 1.0f) {
+    _txStatus = "ungueltiger normierter Zielwert";
+    return false;
+  }
+
+  memcpy(_txPacket, _lastMainPacket, 25U);
+  _txTargetNormalized = normalizedValue;
+  _txField5Raw = denormalize(normalizedValue, _cal[4]);
+  _txPacket[20] = (uint8_t)(_txField5Raw & 0xFFU);
+  _txPacket[21] = (uint8_t)((_txField5Raw >> 8U) & 0xFFU);
+  updatePacketChecksum(_txPacket, 25U);
+
+  _txPacketCount = 0;
+  _txStartMillis = millis();
+  _txNextMillis = _txStartMillis;
+  _txActive = true;
+  _txStatus = "sendet Feld 5 = " + String(_txTargetNormalized, 2) + " fuer ca. 1 s bei 50 Hz";
+  Serial.printf("[UART-TX] Start: Feld 5 norm=%.2f raw=%u, TX GPIO%d, 50 Hz, 1 s\n",
+                _txTargetNormalized, (unsigned)_txField5Raw, _txPin);
+  return true;
+}
+
+void UartManager::serviceTxReplay() {
+  if (!_txActive || !_serial) return;
+  const unsigned long now = millis();
+  if ((unsigned long)(now - _txStartMillis) >= 1000UL) {
+    _txActive = false;
+    _txStatus = "fertig: " + String(_txPacketCount) + " Pakete gesendet";
+    Serial.printf("[UART-TX] Fertig: %lu Pakete\n", (unsigned long)_txPacketCount);
+    return;
+  }
+
+  if ((long)(now - _txNextMillis) >= 0) {
+    const size_t written = _serial->write(_txPacket, 25U);
+    if (written != 25U) {
+      _txActive = false;
+      _txStatus = "Fehler: UART-TX konnte Paket nicht vollstaendig schreiben";
+      Serial.printf("[UART-TX] Fehler: nur %u/25 Bytes geschrieben\n", (unsigned)written);
+      return;
+    }
+    ++_txPacketCount;
+    _txNextMillis += 20UL;
+    if ((long)(now - _txNextMillis) > 100L) _txNextMillis = now + 20UL;
+  }
 }
 
 uint16_t UartManager::rawField(uint8_t index) const {
@@ -346,19 +521,30 @@ String UartManager::jsonEscape(const String& value) {
 
 String UartManager::statusJson() const {
   String j;
-  j.reserve(1800);
+  j.reserve(2600);
   j += "{\"mode\":\"" + jsonEscape(modeText()) + "\",\"running\":" + String(_running ? "true" : "false");
   j += ",\"status\":\"" + jsonEscape(_status) + "\",\"total_bytes\":" + String((unsigned long)(_totalBytes & 0xFFFFFFFFULL));
   j += ",\"raw_hex\":\"" + jsonEscape(rawHex(256)) + "\",\"raw_ascii\":\"" + jsonEscape(rawAscii(256)) + "\"";
-  j += ",\"packets\":" + String(_packetCount) + ",\"valid\":" + String(_validPacketCount) + ",\"invalid\":" + String(_invalidPacketCount) + ",\"main\":" + String(_mainPacketCount);
-  j += ",\"last_type\":" + String(_lastPacketType) + ",\"last_length\":" + String(_lastPacketLength) + ",\"checksum_ok\":" + String(_lastChecksumOk ? "true" : "false");
-  j += ",\"has_main\":" + String(_hasMainPacket ? "true" : "false") + ",\"fields\":[";
+  j += ",\"packets\":" + String(_packetCount) + ",\"valid\":" + String(_validPacketCount) + ",\"invalid\":" + String(_invalidPacketCount);
+  j += ",\"cmd0021\":" + String(_cmd0021Count) + ",\"cmd0023\":" + String(_cmd0023Count) + ",\"cmd0031\":" + String(_cmd0031Count) + ",\"cmd0033\":" + String(_cmd0033Count) + ",\"unknown_cmd\":" + String(_unknownCommandCount);
+  j += ",\"last_route\":" + String(_lastRoute) + ",\"last_outer_length\":" + String(_lastOuterLength) + ",\"last_inner_type\":" + String(_lastInnerType);
+  j += ",\"last_inner_length\":" + String(_lastInnerLength) + ",\"last_command\":" + String(_lastCommand) + ",\"last_data_length\":" + String(_lastDataLength) + ",\"checksum_ok\":" + String(_lastChecksumOk ? "true" : "false");
+  j += ",\"has_main\":" + String(_hasMainPacket ? "true" : "false");
+  j += ",\"tx_ready\":" + String(txReady() ? "true" : "false") + ",\"tx_active\":" + String(_txActive ? "true" : "false");
+  j += ",\"tx_status\":\"" + jsonEscape(_txStatus) + "\",\"tx_target\":" + String(_txTargetNormalized, 3) + ",\"tx_raw\":" + String(_txField5Raw) + ",\"tx_packets\":" + String(_txPacketCount);
+  j += ",\"fields\":[";
   for (uint8_t i = 0; i < 6; ++i) {
     if (i) j += ',';
     j += "{\"index\":" + String(i + 1) + ",\"raw\":" + String(_fields[i]);
     if (i < 5) j += ",\"norm\":" + String(_normalized[i], 4);
     j += '}';
   }
-  j += "]}";
+  j += "]";
+  j += ",\"cmd0023_state\":{\"available\":" + String(_has0023 ? "true" : "false") + ",\"v1\":" + String(_cmd0023Value1) + ",\"v2\":" + String(_cmd0023Value2) + ",\"v3\":" + String(_cmd0023Value3) + "}";
+  j += ",\"cmd0031_state\":{\"available\":" + String(_has0031 ? "true" : "false") + ",\"value\":" + String(_cmd0031Value) + ",\"status\":" + String(_cmd0031Status) + "}";
+  j += ",\"cmd0033_state\":{\"available\":" + String(_has0033 ? "true" : "false") + ",\"fields\":[";
+  for (uint8_t i = 0; i < 6; ++i) { if (i) j += ','; j += String(_cmd0033Fields[i]); }
+  j += "]}}";
   return j;
 }
+

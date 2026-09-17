@@ -1,0 +1,22 @@
+BL_Add field 5 UART replay test
+Date: 2026-09-17
+
+Summary:
+- Added a non-blocking UART transmit replay based on the latest freshly received valid 0x10/0x15 packet.
+- Added two explicit web actions to transmit field 5 normalized to -0.5 or +0.5 for about one second at approximately 50 Hz.
+- Kept all other bytes from the captured packet unchanged and recalculated the XOR checksum after replacing field 5.
+- Added runtime TX readiness checks for decoder mode, configured TX GPIO and a fresh valid packet template.
+- Added live TX status, target value, calculated raw field-5 value and sent-packet counter to the UART monitor.
+- Increased the UART status refresh rate to approximately 250 ms while keeping the replay non-blocking.
+- Bumped the firmware version to 0.11.0 and updated the project documentation.
+
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.11.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.11.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.11.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - Feld5-TX-Replay - v0.11.txt

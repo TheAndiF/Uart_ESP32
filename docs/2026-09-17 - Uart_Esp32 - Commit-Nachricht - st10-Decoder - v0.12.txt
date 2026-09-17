@@ -1,0 +1,23 @@
+BL_Adapt UART decoder to st10 protocol
+Date: 2026-09-17
+
+Summary:
+- Reworked the UART decoder to validate the st10 outer and inner frame structure.
+- Added InnerLength, Command and DataLength parsing and structural length checks.
+- Applied the st10 XOR range from InnerLength low byte through the final data byte.
+- Added dedicated decoding/counters for commands 0x0021, 0x0023, 0x0031 and 0x0033.
+- Kept field 1..6 aliases and normalization bound to command 0x0021.
+- Extended the web monitor and MQTT status with route, inner type, command and command counters.
+- Kept the existing field-5 TX replay but marked it experimental because st10 does not define the D4 target-input protocol.
+- Updated firmware version and project documentation to v0.12.
+
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.12.md
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.12.docx
+- docs/2026-09-17 - Uart_Esp32 - Projektdokumentation - Firmware - v0.12.pdf
+- docs/2026-09-17 - Uart_Esp32 - Commit-Nachricht - st10-Decoder - v0.12.txt
