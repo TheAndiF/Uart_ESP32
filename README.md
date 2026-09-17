@@ -2,9 +2,12 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.7
+## Stand v0.8
 
 
+
+
+**Erweiterung v0.8:** Die UART-Funktion ist jetzt in zwei getrennte Webbereiche aufgeteilt. `/uart` ist eine reine Live-Monitor-/Decoder-Seite; `/uart/settings` enthaelt ausschliesslich Betriebsart, Hardware-UART, GPIOs, Baudrate, Format, Feld-Aliase, Totzone und Kalibrierung. Raw- und Decoder-Modus laufen als Dauerbetrieb unabhaengig davon weiter, ob die Browserseite geoeffnet ist. Der gewaehlte Modus bleibt in NVS gespeichert und wird nach einem Neustart automatisch wieder gestartet. Der 512-Byte-Ringpuffer ueberschreibt im Dauerbetrieb nur die jeweils aeltesten Rohbytes.
 
 **Erweiterung v0.7:** Zwei UART-Betriebsarten wurden ergaenzt: ein Raw-/Sniffer-Modus fuer unverarbeitete serielle Daten sowie ein Protokoll-Decoder gemaess der Messunterlage `ESP32_UART_Protokoll_Entschluesselung`. UART-Nummer, RX/TX-Pins, Baudrate und Format sind ueber `/uart` einstellbar und werden in NVS gespeichert. Fuer Feld 1 bis Feld 6 gibt es frei editierbare Aliasnamen, waehrend die feste technische Kennung `Feld N` immer sichtbar bleibt.
 
@@ -120,11 +123,13 @@ In `arduino_secrets.h` koennen optional folgende Werte gesetzt werden:
 
 ## UART Monitor / Protokoll-Decoder (v0.7)
 
-Neu hinzugekommen ist eine eigene UART-Seite unter `http://<ESP-IP>/uart`. Die Funktion ist in drei Betriebsarten aufgeteilt:
+Die UART-Funktion besitzt ab v0.8 zwei getrennte Seiten: `http://<ESP-IP>/uart` fuer die reine Liveanzeige und `http://<ESP-IP>/uart/settings` fuer die Konfiguration. Die Funktion ist in drei Betriebsarten aufgeteilt:
 
 - **Aus** - keine zusaetzliche UART-Schnittstelle aktiv.
 - **Raw / Sniffer** - empfangene Bytes werden ungefiltert in einem Ringpuffer erfasst und im Webinterface als HEX und ASCII angezeigt.
 - **Protokoll-Decoder** - zusaetzlich zur Rohdatenanzeige wird das in der Messunterlage `ESP32_UART_Protokoll_Entschluesselung` beschriebene Paketformat ausgewertet.
+
+Raw und Protokoll-Decoder sind Dauerbetriebsarten. Die Verarbeitung erfolgt in der normalen ESP32-Hauptschleife und ist nicht an eine offene Browserseite oder eine feste Messanzahl gebunden. Der Ringpuffer bleibt begrenzt, indem nur die aeltesten Rohbytes ueberschrieben werden; Decoderwerte und Zaehler laufen weiter.
 
 Konfigurierbar und in NVS gespeichert werden Hardware-UART 1 oder 2, RX-GPIO, optionaler TX-GPIO, Baudrate und UART-Format (`8N1`, `8E1`, `8O1`, `8N2`). UART0 bleibt fuer den seriellen Debug-Monitor reserviert. GPIO6..11 werden wegen des Flashs gesperrt; GPIO1/3 bleiben fuer UART0 frei. GPIO34..39 koennen nur als RX verwendet werden.
 
@@ -146,9 +151,10 @@ Solange die Bedeutung nicht bestaetigt ist, kann das Alias-Feld leer bleiben ode
 
 | Route | Funktion |
 |---|---|
-| `/uart` | UART-Konfiguration, Raw-Ansicht, Decoder-Livewerte, Feld-Aliase und Kalibrierung |
-| `/uart/status` | Live-Status als JSON fuer die Weboberflaeche |
-| `/save_uart` | Einstellungen, Aliase und Kalibrierwerte speichern |
+| `/uart` | Reine UART-Liveansicht mit Decoderwerten und Raw-Puffer |
+| `/uart/settings` | UART-Konfiguration, Feld-Aliase und Kalibrierung |
+| `/uart/status` | Live-Status als JSON fuer die Monitorseite |
+| `/save_uart` | Einstellungen, Aliase und Kalibrierwerte speichern; UART neu starten |
 | `/uart_clear` | Rohdaten-Ringpuffer leeren |
 
 ### UART-MQTT-Status

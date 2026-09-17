@@ -596,7 +596,7 @@ static String mainPage() {
   h += "</fieldset>";
   h += "<fieldset><legend>Deep Sleep</legend><p><b>Aktiv:</b> " + String(deepSleep.isEnabled()?"ja":"nein") + "</p><p><b>Modus:</b> " + deepSleep.wakeupMode() + "</p><p><b>Naechster Wakeup:</b> " + deepSleep.nextWakeupText() + "</p></fieldset>";
   h += "<fieldset><legend>UART</legend><p><b>Modus:</b> " + htmlEscape(uartMonitor.modeText()) + "</p><p><b>Status:</b> " + htmlEscape(uartMonitor.status()) + "</p><p><b>Empfangene Bytes:</b> " + String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)) + "</p></fieldset>";
-  h += "<a class='btn' href='/uart'>UART Monitor / Decoder</a><a class='btn' href='/network'>WLAN / NTP</a><a class='btn' href='/mqtt'>MQTT</a><a class='btn' href='/battery'>Batterie / ADC</a><a class='btn' href='/deepsleep'>Deep Sleep</a><a class='btn' href='/ota'>OTA Update</a>";
+  h += "<a class='btn' href='/uart'>UART Monitor / Decoder</a><a class='btn' href='/uart/settings'>UART Einstellungen</a><a class='btn' href='/network'>WLAN / NTP</a><a class='btn' href='/mqtt'>MQTT</a><a class='btn' href='/battery'>Batterie / ADC</a><a class='btn' href='/deepsleep'>Deep Sleep</a><a class='btn' href='/ota'>OTA Update</a>";
   h += "<form method='post' action='/reboot'><button type='submit'>ESP32 neu starten</button></form></div></body></html>";
   return h;
 }
@@ -644,12 +644,38 @@ static String networkPage() {
   return h;
 }
 
-static String uartPage() {
+static String uartMonitorPage() {
   String h = pageHead("UART Monitor / Decoder");
   h += "<h1>UART Monitor / Decoder</h1>";
-  h += "<p class='small'>UART0 bleibt fuer den seriellen Debug-Monitor reserviert. Verwendbar sind Hardware-UART1 oder UART2. RX zuerst anschliessen; TX kann mit -1 deaktiviert bleiben.</p>";
+  h += "<p class='small'>Diese Seite ist nur fuer die Liveanzeige. Der UART-Empfang und die Dekodierung laufen im Hintergrund dauerhaft weiter, solange der gespeicherte Modus <b>Raw / Sniffer</b> oder <b>Protokoll-Decoder</b> aktiv ist. Die Seite muss dafuer nicht geoeffnet bleiben.</p>";
+  h += "<fieldset><legend>Live-Status</legend><p><b>Status:</b> <span id='uart_status'>" + htmlEscape(uartMonitor.status()) + "</span></p><p><b>Bytes seit Start / Puffer-Reset:</b> <span id='uart_bytes'>0</span></p>";
+  h += "<table class='tbl'><tr><th>Technisches Feld</th><th>Alias</th><th>Rohwert</th><th>Normiert</th></tr>";
+  for (uint8_t i=0;i<6;++i) {
+    String alias = uartMonitor.fieldAlias(i); if (!alias.length()) alias = "-";
+    h += "<tr><td><b>Feld " + String(i+1) + "</b></td><td>" + htmlEscape(alias) + "</td><td id='raw" + String(i+1) + "'>-</td><td id='norm" + String(i+1) + "'>" + String(i<5?"-":"nicht normiert") + "</td></tr>";
+  }
+  h += "</table><p><b>Pakete:</b> <span id='pkt'>0</span> &nbsp; <b>gueltig:</b> <span id='pkt_ok'>0</span> &nbsp; <b>ungueltig:</b> <span id='pkt_bad'>0</span> &nbsp; <b>0x10/0x15:</b> <span id='pkt_main'>0</span></p></fieldset>";
+  h += "<fieldset><legend>Letzte Rohdaten</legend><p class='small'>Der interne Ringpuffer laeuft ohne feste Laufzeitbegrenzung weiter und ueberschreibt nur die jeweils aeltesten Bytes. Angezeigt werden maximal die letzten 256 Bytes des 512-Byte-Puffers.</p><b>HEX</b><pre class='raw' id='raw_hex'>" + htmlEscape(uartMonitor.rawHex(256)) + "</pre><b>ASCII</b><pre class='raw' id='raw_ascii'>" + htmlEscape(uartMonitor.rawAscii(256)) + "</pre></fieldset>";
+  h += "<form method='post' action='/uart_clear'><button type='submit'>Rohdatenpuffer / Bytezaehler leeren</button></form>";
+  h += "<a class='btn' href='/uart/settings'>UART-Einstellungen</a><a class='btn' href='/'>Zurueck</a>";
+  h += R"rawliteral(<script>
+async function updateUart(){try{const r=await fetch('/uart/status',{cache:'no-store'});if(!r.ok)return;const d=await r.json();
+document.getElementById('uart_status').textContent=d.status;document.getElementById('uart_bytes').textContent=d.total_bytes;
+document.getElementById('raw_hex').textContent=d.raw_hex;document.getElementById('raw_ascii').textContent=d.raw_ascii;
+document.getElementById('pkt').textContent=d.packets;document.getElementById('pkt_ok').textContent=d.valid;document.getElementById('pkt_bad').textContent=d.invalid;document.getElementById('pkt_main').textContent=d.main;
+if(d.fields){for(let i=0;i<d.fields.length;i++){const n=i+1;document.getElementById('raw'+n).textContent=d.has_main?d.fields[i].raw:'-';if(i<5)document.getElementById('norm'+n).textContent=d.has_main?Number(d.fields[i].norm).toFixed(3):'-';}}
+}catch(e){}}setInterval(updateUart,1000);updateUart();
+</script>)rawliteral";
+  h += "</div></body></html>";
+  return h;
+}
+
+static String uartSettingsPage() {
+  String h = pageHead("UART Einstellungen");
+  h += "<h1>UART Einstellungen</h1>";
+  h += "<p class='small'>Hier werden nur Betriebsart, Schnittstelle, Feldnamen und Decoder-Kalibrierung konfiguriert. Die eigentliche Liveanzeige befindet sich auf der separaten Monitorseite. Wird <b>Protokoll-Decoder</b> gespeichert, laeuft die Dekodierung dauerhaft im Hintergrund und startet nach einem Neustart wieder automatisch.</p>";
   h += "<form method='post' action='/save_uart'><fieldset><legend>Betriebsart / Schnittstelle</legend>";
-  h += "<label>Modus</label><select name='mode'><option value='0'" + String(uartMonitor.mode()==UartManager::Mode::Off?" selected":"") + ">Aus</option><option value='1'" + String(uartMonitor.mode()==UartManager::Mode::Raw?" selected":"") + ">Raw / Sniffer</option><option value='2'" + String(uartMonitor.mode()==UartManager::Mode::Decode?" selected":"") + ">Protokoll-Decoder</option></select>";
+  h += "<label>Modus</label><select name='mode'><option value='0'" + String(uartMonitor.mode()==UartManager::Mode::Off?" selected":"") + ">Aus</option><option value='1'" + String(uartMonitor.mode()==UartManager::Mode::Raw?" selected":"") + ">Raw / Sniffer (Dauerbetrieb)</option><option value='2'" + String(uartMonitor.mode()==UartManager::Mode::Decode?" selected":"") + ">Protokoll-Decoder (Dauerbetrieb)</option></select>";
   h += "<label>Hardware-UART</label><select name='uartno'><option value='1'" + String(uartMonitor.uartNumber()==1?" selected":"") + ">UART1</option><option value='2'" + String(uartMonitor.uartNumber()==2?" selected":"") + ">UART2</option></select>";
   h += "<label>RX GPIO</label><input type='number' min='0' max='39' name='rxpin' value='" + String(uartMonitor.rxPin()) + "'>";
   h += "<label>TX GPIO (-1 = nicht verwenden)</label><input type='number' min='-1' max='33' name='txpin' value='" + String(uartMonitor.txPin()) + "'>";
@@ -657,7 +683,7 @@ static String uartPage() {
   h += "<label>Format</label><select name='frame'>";
   const char* frames[] = {"8N1","8E1","8O1","8N2"};
   for (const char* f : frames) h += "<option value='" + String(f) + "'" + String(uartMonitor.frame()==f?" selected":"") + ">" + String(f) + "</option>";
-  h += "</select><p class='small'>Nicht verwenden: GPIO6..11 (Flash), GPIO1/3 (Debug-UART). GPIO34..39 sind nur als RX geeignet.</p></fieldset>";
+  h += "</select><p class='small'>UART0 bleibt fuer den seriellen Debug-Monitor reserviert. Nicht verwenden: GPIO6..11 (Flash), GPIO1/3 (Debug-UART). GPIO34..39 sind nur als RX geeignet. Fuer erste Messungen TX auf -1 belassen.</p></fieldset>";
 
   h += "<fieldset><legend>Feldnamen</legend><p class='small'>Der feste technische Name Feld 1 ... Feld 6 bleibt immer sichtbar. Der Alias ist nur eine zusaetzliche, frei aenderbare Bezeichnung.</p>";
   for (uint8_t i=0;i<6;++i) {
@@ -672,26 +698,9 @@ static String uartPage() {
     auto c = uartMonitor.calibration(i);
     h += "<tr><td>Feld " + String(i+1) + "</td><td><input type='number' name='min" + String(i+1) + "' value='" + String(c.minV) + "'></td><td><input type='number' name='ctr" + String(i+1) + "' value='" + String(c.centerV) + "'></td><td><input type='number' name='max" + String(i+1) + "' value='" + String(c.maxV) + "'></td></tr>";
   }
-  h += "</table></fieldset><button type='submit'>UART-Einstellungen speichern / neu starten</button></form>";
-
-  h += "<fieldset><legend>Live-Status</legend><p><b>Status:</b> <span id='uart_status'>" + htmlEscape(uartMonitor.status()) + "</span></p><p><b>Bytes:</b> <span id='uart_bytes'>0</span></p>";
-  h += "<table class='tbl'><tr><th>Technisches Feld</th><th>Alias</th><th>Rohwert</th><th>Normiert</th></tr>";
-  for (uint8_t i=0;i<6;++i) {
-    String alias = uartMonitor.fieldAlias(i); if (!alias.length()) alias = "-";
-    h += "<tr><td><b>Feld " + String(i+1) + "</b></td><td>" + htmlEscape(alias) + "</td><td id='raw" + String(i+1) + "'>-</td><td id='norm" + String(i+1) + "'>" + String(i<5?"-":"nicht normiert") + "</td></tr>";
-  }
-  h += "</table><p><b>Pakete:</b> <span id='pkt'>0</span> &nbsp; <b>gueltig:</b> <span id='pkt_ok'>0</span> &nbsp; <b>ungueltig:</b> <span id='pkt_bad'>0</span> &nbsp; <b>0x10/0x15:</b> <span id='pkt_main'>0</span></p></fieldset>";
-  h += "<fieldset><legend>Letzte Rohdaten</legend><p class='small'>Maximal die letzten 256 Bytes der internen 512-Byte-Ringpufferung.</p><b>HEX</b><pre class='raw' id='raw_hex'>" + htmlEscape(uartMonitor.rawHex(256)) + "</pre><b>ASCII</b><pre class='raw' id='raw_ascii'>" + htmlEscape(uartMonitor.rawAscii(256)) + "</pre></fieldset>";
-  h += "<form method='post' action='/uart_clear'><button type='submit'>Rohdatenpuffer leeren</button></form><a class='btn' href='/'>Zurueck</a>";
-  h += R"rawliteral(<script>
-async function updateUart(){try{const r=await fetch('/uart/status',{cache:'no-store'});if(!r.ok)return;const d=await r.json();
-document.getElementById('uart_status').textContent=d.status;document.getElementById('uart_bytes').textContent=d.total_bytes;
-document.getElementById('raw_hex').textContent=d.raw_hex;document.getElementById('raw_ascii').textContent=d.raw_ascii;
-document.getElementById('pkt').textContent=d.packets;document.getElementById('pkt_ok').textContent=d.valid;document.getElementById('pkt_bad').textContent=d.invalid;document.getElementById('pkt_main').textContent=d.main;
-if(d.fields){for(let i=0;i<d.fields.length;i++){const n=i+1;document.getElementById('raw'+n).textContent=d.has_main?d.fields[i].raw:'-';if(i<5)document.getElementById('norm'+n).textContent=d.has_main?Number(d.fields[i].norm).toFixed(3):'-';}}
-}catch(e){}}setInterval(updateUart,1000);updateUart();
-</script>)rawliteral";
-  h += "</div></body></html>";
+  h += "</table></fieldset><button type='submit'>UART-Einstellungen speichern / UART neu starten</button></form>";
+  h += "<fieldset><legend>Aktueller Zustand</legend><p><b>Modus:</b> " + htmlEscape(uartMonitor.modeText()) + "</p><p><b>Status:</b> " + htmlEscape(uartMonitor.status()) + "</p><p class='small'>Die Einstellungen werden in NVS gespeichert. Ein aktiver Raw- oder Decoder-Modus wird nach einem normalen Neustart automatisch wieder gestartet.</p></fieldset>";
+  h += "<a class='btn' href='/uart'>Zum UART Monitor</a><a class='btn' href='/'>Zurueck</a></div></body></html>";
   return h;
 }
 
@@ -741,7 +750,8 @@ static void registerRoutes() {
     r->send(200,"text/html; charset=utf-8",pageHead("WLAN geloescht")+"<h1>NVS-WLAN geloescht</h1><p>Neustart ...</p></div></body></html>");
     delay(500); ESP.restart();
   });
-  server.on("/uart", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",uartPage()); });
+  server.on("/uart", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",uartMonitorPage()); });
+  server.on("/uart/settings", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",uartSettingsPage()); });
   server.on("/uart/status", HTTP_GET, [](AsyncWebServerRequest* r){
     AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.statusJson());
     resp->addHeader("Cache-Control", "no-store");
@@ -766,8 +776,8 @@ static void registerRoutes() {
     }
     uartMonitor.save();
     bool ok=uartMonitor.restart();
-    if (!ok) r->send(400,"text/html; charset=utf-8",pageHead("UART Fehler")+"<h1>UART-Konfiguration ungueltig</h1><p>"+htmlEscape(uartMonitor.status())+"</p><a class='btn' href='/uart'>Zurueck</a></div></body></html>");
-    else r->redirect("/uart");
+    if (!ok) r->send(400,"text/html; charset=utf-8",pageHead("UART Fehler")+"<h1>UART-Konfiguration ungueltig</h1><p>"+htmlEscape(uartMonitor.status())+"</p><a class='btn' href='/uart/settings'>Zurueck zu den Einstellungen</a></div></body></html>");
+    else r->redirect("/uart/settings");
   });
   server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",mqttPage()); });
   server.on("/save_mqtt", HTTP_POST, [](AsyncWebServerRequest* r){
