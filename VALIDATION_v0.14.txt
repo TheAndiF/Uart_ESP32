@@ -1,0 +1,26 @@
+Uart_Esp32 v0.14 - Validierung
+Date: 2026-09-20
+
+- UartManager.cpp und TestCandidateCatalog.cpp mit einem lokalen Arduino-/ESP32-API-Stub
+  per g++ -std=c++17 -fsyntax-only geprueft: keine Syntaxfehler.
+- main.cpp mit lokalen Stubs fuer Arduino, WiFi, ESPAsyncWebServer, Preferences und
+  die uebrigen benoetigten API-Typen per g++ -std=c++17 -fsyntax-only geprueft:
+  keine Syntaxfehler.
+- Neue Konsolen-Ringpuffer-/JSON-Funktion mit einem lokalen Testprogramm geprueft:
+  * inkrementelle Sequenzabfrage funktioniert,
+  * CR/LF werden korrekt als JSON uebertragen,
+  * Anfuehrungszeichen und Backslash werden korrekt escaped,
+  * ESC/Steuerzeichen werden als Unicode-Escape ausgegeben und von einem JSON-Parser wieder gelesen,
+  * clearConsole() leert den Ringpuffer, ohne die Sequenzlogik zu brechen.
+- Routing-Reihenfolge manuell geprueft: /uart/console/data, /send, /control und /clear
+  werden vor /uart/console und dem kompatiblen /uart-Redirect registriert.
+- Firmwarestand wurde in main.cpp auf v0.14 und in ConfigDefaults.h auf 0.14.0 angehoben.
+
+Nicht in dieser Umgebung verifiziert:
+- echter PlatformIO/ESP32-Build (PlatformIO/ESP32-Toolchain ist nicht installiert),
+- Flashen auf ESP32-WROOM-32 / NodeMCU-32S,
+- elektrische BX3-Pegel und physischer BX3 Console-RX-Pin,
+- realer Login-/Shell-Test am BX3.
+
+Vor dem Flashen lokal ausfuehren:
+  pio run -e uart_esp32_usb

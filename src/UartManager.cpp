@@ -6,8 +6,15 @@ static bool prefHas(Preferences& p, const char* key) { return p.isKey(key); }
 void UartManager::load() {
   Preferences p;
   p.begin("uartconf", true);
-  _mode = (Mode)(prefHas(p, "mode") ? p.getUChar("mode", 0) : 0);
-  if ((uint8_t)_mode > (uint8_t)Mode::Decode) _mode = Mode::Off;
+
+  // v0.15 migration: older firmware stored one exclusive mode (Off/Raw/
+  // Decode/Console). Any previously active mode becomes one enabled common
+  // UART transport. TX remains deliberately locked after migration until the
+  // user explicitly enables it in UART Einstellungen.
+  const uint8_t legacyMode = prefHas(p, "mode") ? p.getUChar("mode", 0) : 0;
+  _enabled = prefHas(p, "enabled") ? p.getBool("enabled", legacyMode != 0) : (legacyMode != 0);
+  _txEnabled = prefHas(p, "tx_enabled") ? p.getBool("tx_enabled", false) : false;
+
   _uartNumber = prefHas(p, "uartno") ? p.getUChar("uartno", 2) : 2;
   if (_uartNumber != 1 && _uartNumber != 2) _uartNumber = 2;
   _rxPin = prefHas(p, "rxpin") ? p.getInt("rxpin", 16) : 16;
@@ -42,7 +49,11 @@ void UartManager::load() {
 void UartManager::save() {
   Preferences p;
   p.begin("uartconf", false);
-  p.putUChar("mode", (uint8_t)_mode);
+  p.putBool("enabled", _enabled);
+  p.putBool("tx_enabled", _txEnabled);
+  // Keep a small compatibility marker for older firmware revisions. Raw mode
+  // is the least surprising fallback because v0.15 no longer has modes.
+  p.putUChar("mode", _enabled ? 1U : 0U);
   p.putUChar("uartno", _uartNumber);
   p.putInt("rxpin", _rxPin);
   p.putInt("txpin", _txPin);
@@ -71,8 +82,8 @@ void UartManager::begin() {
 
 bool UartManager::start() {
   if (_running) return true;
-  if (_mode == Mode::Off) {
-    _status = "deaktiviert - Modus Aus";
+  if (!_enabled) {
+    _status = "deaktiviert - UART Basisbetrieb ist ausgeschaltet";
     return false;
   }
   if (!validPins()) {
@@ -88,12 +99,19 @@ bool UartManager::start() {
   _hasLastMainPacketCopy = false;
   _txActive = false;
   _txPacketCount = 0;
-  _txStatus = (_txPin >= 0) ? String("warte auf gueltiges 0x0021-Paket") : String("nicht bereit: TX GPIO ist deaktiviert");
+  _txStatus = !_txEnabled ? String("TX gesperrt") :
+              (_txPin >= 0 ? String("TX freigegeben - warte auf gueltiges 0x0021-Paket") : String("TX freigegeben, aber kein TX GPIO konfiguriert"));
+
   _serial = (_uartNumber == 1) ? &_uart1 : &_uart2;
-  _serial->begin(_baud, serialConfig(), _rxPin, _txPin);
+  // Important safety property: when TX is locked, HardwareSerial is started
+  // with TX=-1 so the configured GPIO is not driven by the UART peripheral.
+  const int activeTxPin = _txEnabled ? _txPin : -1;
+  _serial->begin(_baud, serialConfig(), _rxPin, activeTxPin);
   _running = true;
-  _status = modeText() + " aktiv auf UART" + String(_uartNumber) + ", RX GPIO" + String(_rxPin);
-  if (_txPin >= 0) _status += ", TX GPIO" + String(_txPin);
+  _status = "UART aktiv auf UART" + String(_uartNumber) + ", RX GPIO" + String(_rxPin);
+  if (_txEnabled && _txPin >= 0) _status += ", TX GPIO" + String(_txPin) + " freigegeben";
+  else if (_txPin >= 0) _status += ", TX GPIO" + String(_txPin) + " gesperrt";
+  else _status += ", RX-only";
   _status += ", " + String(_baud) + " " + _frame;
   Serial.printf("[UART] %s\n", _status.c_str());
   return true;
@@ -101,6 +119,7 @@ bool UartManager::start() {
 
 void UartManager::stop() {
   _txActive = false;
+  if (_probeState != ProbeState::Idle) stopProbeSweep();
   if (_serial) {
     _serial->end();
     delay(5);
@@ -109,13 +128,13 @@ void UartManager::stop() {
   _running = false;
   resetParser();
   if (_txStatus.startsWith("sendet")) _txStatus = "gestoppt";
-  _status = (_mode == Mode::Off) ? String("deaktiviert") : modeText() + " gestoppt";
+  _status = _enabled ? String("UART gestoppt") : String("deaktiviert");
   Serial.printf("[UART] %s\n", _status.c_str());
 }
 
 bool UartManager::restart() {
   stop();
-  if (_mode == Mode::Off) {
+  if (!_enabled) {
     _status = "deaktiviert";
     return true;
   }
@@ -123,25 +142,36 @@ bool UartManager::restart() {
 }
 
 void UartManager::loop() {
-  if (!_running || !_serial || _mode == Mode::Off) return;
+  if (!_running || !_serial) return;
   int budget = 512;
   while (_serial->available() > 0 && budget-- > 0) {
-    int value = _serial->read();
+    const int value = _serial->read();
     if (value < 0) break;
-    uint8_t b = (uint8_t)value;
+    const uint8_t b = (uint8_t)value;
+
+    // One physical RX stream feeds all consumers in parallel. Opening or using
+    // the decoder therefore no longer hides bytes from the UART console.
     pushRaw(b);
+    pushConsole(b);
+    processDecoderByte(b);
     ++_totalBytes;
-    if (_mode == Mode::Decode) processDecoderByte(b);
   }
+
   serviceTxReplay();
+  serviceProbe();
 }
 
 String UartManager::modeText() const {
-  switch (_mode) {
-    case Mode::Raw: return "Raw / Sniffer";
-    case Mode::Decode: return "Protokoll-Decoder";
-    default: return "Aus";
-  }
+  return _enabled ? String("UART Basisbetrieb") : String("Aus");
+}
+
+String UartManager::txOwnerText() const {
+  if (!_txEnabled) return "gesperrt";
+  if (!_running || !_serial) return "UART gestoppt";
+  if (_txPin < 0 || !validTxPin(_txPin)) return "kein gueltiger TX GPIO";
+  if (_probeState != ProbeState::Idle) return "UART Probe-Runner";
+  if (_txActive) return "Decoder Feld-5-Replay";
+  return "frei";
 }
 
 bool UartManager::validRxPin(int pin) const {
@@ -186,6 +216,90 @@ void UartManager::pushRaw(uint8_t value) {
   _raw[_rawHead] = value;
   _rawHead = (_rawHead + 1U) % RAW_CAPACITY;
   if (_rawCount < RAW_CAPACITY) ++_rawCount;
+}
+
+void UartManager::pushConsole(uint8_t value) {
+  _console[_consoleHead] = value;
+  _consoleHead = (_consoleHead + 1U) % CONSOLE_CAPACITY;
+  if (_consoleCount < CONSOLE_CAPACITY) ++_consoleCount;
+  ++_consoleSequence;
+}
+
+bool UartManager::baseTxReady() const {
+  return _running && _serial && _txEnabled && _txPin >= 0 && validTxPin(_txPin);
+}
+
+bool UartManager::consoleTxReady() const {
+  return baseTxReady() && _probeState == ProbeState::Idle && !_txActive;
+}
+
+size_t UartManager::consoleWrite(const uint8_t* data, size_t length) {
+  if (!consoleTxReady() || !data || !length) return 0;
+  const size_t written = _serial->write(data, length);
+  _consoleTxBytes += (uint32_t)written;
+  return written;
+}
+
+void UartManager::clearConsole() {
+  _consoleHead = 0;
+  _consoleCount = 0;
+}
+
+String UartManager::consoleChunkJson(uint32_t sinceSequence) const {
+  const uint32_t current = _consoleSequence;
+  const uint32_t oldest = current - (uint32_t)_consoleCount;
+  bool truncated = false;
+
+  if (sinceSequence < oldest || sinceSequence > current) {
+    sinceSequence = oldest;
+    truncated = true;
+  }
+
+  size_t skip = (size_t)(sinceSequence - oldest);
+  if (skip > _consoleCount) skip = _consoleCount;
+  const size_t count = _consoleCount - skip;
+  const size_t oldestIndex = (_consoleHead + CONSOLE_CAPACITY - _consoleCount) % CONSOLE_CAPACITY;
+  size_t pos = (oldestIndex + skip) % CONSOLE_CAPACITY;
+
+  String text;
+  String hex;
+  text.reserve(count + count / 8U + 16U);
+  hex.reserve(count * 2U + 1U);
+  char hexEscape[7];
+  char hexByte[3];
+  for (size_t i = 0; i < count; ++i) {
+    const uint8_t b = _console[pos];
+    pos = (pos + 1U) % CONSOLE_CAPACITY;
+    snprintf(hexByte, sizeof(hexByte), "%02X", (unsigned)b);
+    hex += hexByte;
+    switch (b) {
+      case '\\': text += "\\\\"; break;
+      case '"': text += "\\\""; break;
+      case '\n': text += "\\n"; break;
+      case '\r': text += "\\r"; break;
+      case '\t': text += "\\t"; break;
+      default:
+        if (b >= 32U && b <= 126U) text += (char)b;
+        else {
+          snprintf(hexEscape, sizeof(hexEscape), "\\u%04X", (unsigned)b);
+          text += hexEscape;
+        }
+        break;
+    }
+  }
+
+  String j;
+  j.reserve(text.length() + hex.length() + 340U);
+  j += "{\"mode\":\"" + jsonEscape(modeText()) + "\",\"running\":" + String(_running ? "true" : "false");
+  j += ",\"tx_enabled\":" + String(_txEnabled ? "true" : "false");
+  j += ",\"tx_ready\":" + String(consoleTxReady() ? "true" : "false");
+  j += ",\"tx_owner\":\"" + jsonEscape(txOwnerText()) + "\"";
+  j += ",\"sequence\":" + String(current) + ",\"oldest\":" + String(oldest);
+  j += ",\"truncated\":" + String(truncated ? "true" : "false");
+  j += ",\"rx_bytes\":" + String((unsigned long)(_totalBytes & 0xFFFFFFFFULL));
+  j += ",\"tx_bytes\":" + String(_consoleTxBytes);
+  j += ",\"text\":\"" + text + "\",\"hex\":\"" + hex + "\"}";
+  return j;
 }
 
 String UartManager::rawHex(size_t maxBytes) const {
@@ -296,6 +410,10 @@ void UartManager::handlePacket(size_t packetLength) {
   }
 
   _lastCommand = (uint16_t)_packet[8] | ((uint16_t)_packet[9] << 8U);
+  const uint16_t seenByte = (uint16_t)(_lastCommand >> 3U);
+  const uint8_t seenMask = (uint8_t)(1U << (_lastCommand & 7U));
+  const bool commandSeenBefore = (_seenCommandBits[seenByte] & seenMask) != 0U;
+  _seenCommandBits[seenByte] |= seenMask;
   _lastDataLength = (uint16_t)(_lastInnerLength - 3U);
   const size_t expectedDataEnd = 10U + (size_t)_lastDataLength;
   if (expectedDataEnd + 1U != packetLength) {
@@ -322,9 +440,11 @@ void UartManager::handlePacket(size_t packetLength) {
     const bool firstFreshTemplate = !_hasLastMainPacketCopy;
     _hasLastMainPacketCopy = true;
     if (firstFreshTemplate && !_txActive) {
-      _txStatus = (_txPin >= 0) ? String("bereit: gueltiges 0x0021-Paket vorhanden") : String("nicht bereit: TX GPIO ist deaktiviert");
+      _txStatus = !_txEnabled ? String("TX gesperrt") : ((_txPin >= 0) ? String("bereit: gueltiges 0x0021-Paket vorhanden") : String("nicht bereit: TX GPIO ist deaktiviert"));
     }
     // 0x0021 DATA: 2 meta bytes, then six uint16 little-endian fields.
+    _last0021Meta[0] = data[0];
+    _last0021Meta[1] = data[1];
     for (uint8_t i = 0; i < 6; ++i) {
       const size_t pos = 2U + 2U * i;
       _fields[i] = (uint16_t)data[pos] | ((uint16_t)data[pos + 1U] << 8U);
@@ -351,6 +471,8 @@ void UartManager::handlePacket(size_t packetLength) {
     _has0033 = true;
     // st10: same structural form as 0x0021 (2 meta bytes + 6 x uint16 LE),
     // but semantic ordering remains intentionally unnamed/open.
+    _last0033Meta[0] = data[0];
+    _last0033Meta[1] = data[1];
     for (uint8_t i = 0; i < 6; ++i) {
       const size_t pos = 2U + 2U * i;
       _cmd0033Fields[i] = (uint16_t)data[pos] | ((uint16_t)data[pos + 1U] << 8U);
@@ -359,6 +481,8 @@ void UartManager::handlePacket(size_t packetLength) {
   else {
     ++_unknownCommandCount;
   }
+
+  observeProbeFrame(_lastCommand, data, _lastDataLength, commandSeenBefore);
 }
 
 float UartManager::normalize(uint16_t raw, const Calibration& c) const {
@@ -399,10 +523,14 @@ void UartManager::updatePacketChecksum(uint8_t* packet, size_t packetLength) con
 }
 
 bool UartManager::txReady() const {
-  return _running && _serial && _mode == Mode::Decode && _txPin >= 0 && validTxPin(_txPin) && _hasLastMainPacketCopy;
+  return baseTxReady() && _hasLastMainPacketCopy && _probeState == ProbeState::Idle && !_txActive;
 }
 
 bool UartManager::sendField5ForOneSecond(float normalizedValue) {
+  if (_probeState != ProbeState::Idle) {
+    _txStatus = "nicht bereit: automatischer Probe-Runner ist aktiv";
+    return false;
+  }
   if (_txActive) {
     _txStatus = "Senden bereits aktiv";
     return false;
@@ -411,8 +539,8 @@ bool UartManager::sendField5ForOneSecond(float normalizedValue) {
     _txStatus = "nicht bereit: UART ist gestoppt";
     return false;
   }
-  if (_mode != Mode::Decode) {
-    _txStatus = "nicht bereit: Protokoll-Decoder ist nicht aktiv";
+  if (!_txEnabled) {
+    _txStatus = "nicht bereit: TX ist in UART Einstellungen gesperrt";
     return false;
   }
   if (_txPin < 0 || !validTxPin(_txPin)) {
@@ -469,6 +597,296 @@ void UartManager::serviceTxReplay() {
   }
 }
 
+namespace {
+constexpr unsigned long PROBE_BASELINE_MS = 2000UL;
+constexpr unsigned long PROBE_CANDIDATE_MS = 5000UL;
+constexpr unsigned long PROBE_SEND_INTERVAL_MS = 250UL;
+constexpr unsigned long PROBE_GAP_MS = 500UL;
+constexpr unsigned long PROBE_PAUSE_DETECT_MS = 500UL;
+constexpr uint16_t PROBE_VALUE_DELTA = 30U;
+constexpr uint32_t PROBE_REACTION_NEW_COMMAND = 1U << 0;
+constexpr uint32_t PROBE_REACTION_VALUE_CHANGE = 1U << 1;
+constexpr uint32_t PROBE_REACTION_META_STATUS = 1U << 2;
+constexpr uint32_t PROBE_REACTION_RATE_CHANGE = 1U << 3;
+constexpr uint32_t PROBE_REACTION_PAUSE = 1U << 4;
+
+static uint16_t absDelta16(uint16_t a, uint16_t b) {
+  return a > b ? (uint16_t)(a - b) : (uint16_t)(b - a);
+}
+}
+
+bool UartManager::startProbeSweep(bool stopOnReaction) {
+  if (_probeState != ProbeState::Idle) {
+    _probeStatus = "Probe-Runner laeuft bereits";
+    return false;
+  }
+  if (_txActive) {
+    _probeStatus = "nicht bereit: experimentelles Feld-5-Senden ist aktiv";
+    return false;
+  }
+  if (!_running || !_serial) {
+    _probeStatus = "nicht bereit: UART ist gestoppt";
+    return false;
+  }
+  if (!_txEnabled) {
+    _probeStatus = "nicht bereit: TX ist in UART Einstellungen gesperrt";
+    return false;
+  }
+  if (_txPin < 0 || !validTxPin(_txPin)) {
+    _probeStatus = "nicht bereit: gueltiger TX GPIO fehlt";
+    return false;
+  }
+
+  _probeStopOnReaction = stopOnReaction;
+  _probeOrderIndex = 0;
+  _probeCompleted = 0;
+  _probeCandidate = UartTestCandidate{};
+  _probeSentCount = 0;
+  _probeReactionFlags = 0;
+  _probeFirstUnknownCommand = 0;
+  _probeMaxFieldDelta = 0;
+  _probeState = ProbeState::Baseline;
+  _probeStateStartMillis = millis();
+  _probeBaselineCounts[0] = _cmd0021Count;
+  _probeBaselineCounts[1] = _cmd0023Count;
+  _probeBaselineCounts[2] = _cmd0031Count;
+  _probeBaselineCounts[3] = _cmd0033Count;
+  _probeStatus = "Baseline wird 2 s aufgezeichnet";
+
+  Serial.println();
+  Serial.println("[PROBE] ================================================");
+  Serial.printf("[PROBE] Automatischer Test gestartet: %u Kandidaten, 5 s/Kandidat, Senden alle 250 ms\n",
+                (unsigned)TestCandidateCatalog::COUNT);
+  Serial.printf("[PROBE] Reihenfolge: P0 -> P1 -> P2 -> P3; Treffer-Stopp: %s\n",
+                _probeStopOnReaction ? "JA" : "NEIN");
+  Serial.println("[PROBE] Baseline: D2 wird 2 s ohne Senden beobachtet ...");
+  return true;
+}
+
+void UartManager::stopProbeSweep() {
+  if (_probeState == ProbeState::Idle) return;
+  _probeState = ProbeState::Idle;
+  _probeStatus = "manuell gestoppt nach " + String(_probeCompleted) + " Kandidaten";
+  Serial.printf("[PROBE] STOP: %lu Kandidaten abgeschlossen\n", (unsigned long)_probeCompleted);
+}
+
+void UartManager::setProbeReaction(uint32_t flag, const char* text) {
+  if ((_probeReactionFlags & flag) != 0U) return;
+  _probeReactionFlags |= flag;
+  Serial.printf("[PROBE] !!! REAKTION: %s\n", text);
+}
+
+String UartManager::probeReactionText() const {
+  if (_probeReactionFlags == 0U) return "keine Aenderung erkannt";
+  String r;
+  auto add = [&r](const char* t) { if (r.length()) r += ", "; r += t; };
+  if (_probeReactionFlags & PROBE_REACTION_NEW_COMMAND) add("neuer/unbekannter Command");
+  if (_probeReactionFlags & PROBE_REACTION_VALUE_CHANGE) add("Wertaenderung");
+  if (_probeReactionFlags & PROBE_REACTION_META_STATUS) add("Meta/Status geaendert");
+  if (_probeReactionFlags & PROBE_REACTION_RATE_CHANGE) add("Rate geaendert");
+  if (_probeReactionFlags & PROBE_REACTION_PAUSE) add("D2 Pause/Reset");
+  if (_probeFirstUnknownCommand) {
+    char b[20];
+    snprintf(b, sizeof(b), " (Cmd 0x%04X)", _probeFirstUnknownCommand);
+    r += b;
+  }
+  if (_probeMaxFieldDelta) r += ", max Delta=" + String(_probeMaxFieldDelta);
+  return r;
+}
+
+void UartManager::beginProbeCandidate() {
+  const uint16_t catalogNo = TestCandidateCatalog::catalogNumberForTestOrder(_probeOrderIndex);
+  if (!catalogNo || !TestCandidateCatalog::build(catalogNo, _probeCandidate)) {
+    _probeState = ProbeState::Idle;
+    _probeStatus = "Fehler beim Erzeugen des Testkandidaten";
+    Serial.println("[PROBE] FEHLER: Kandidat konnte nicht erzeugt werden");
+    return;
+  }
+
+  _probeReactionFlags = 0;
+  _probeFirstUnknownCommand = 0;
+  _probeMaxFieldDelta = 0;
+  _probeSentCount = 0;
+  _probeStateStartMillis = millis();
+  _probeNextSendMillis = _probeStateStartMillis;
+  _probeLastProgressMillis = _probeStateStartMillis;
+  _probeCandidateStartValid = _validPacketCount;
+  _probeCandidateStartUnknown = _unknownCommandCount;
+  _probeCandidateStartCounts[0] = _cmd0021Count;
+  _probeCandidateStartCounts[1] = _cmd0023Count;
+  _probeCandidateStartCounts[2] = _cmd0031Count;
+  _probeCandidateStartCounts[3] = _cmd0033Count;
+
+  _probeStartHas0021 = _hasMainPacket;
+  _probeStartHas0031 = _has0031;
+  _probeStartHas0033 = _has0033;
+  memcpy(_probeStartFields0021, _fields, sizeof(_probeStartFields0021));
+  memcpy(_probeStartFields0033, _cmd0033Fields, sizeof(_probeStartFields0033));
+  _probeStart0031Value = _cmd0031Value;
+  _probeStart0031Status = _cmd0031Status;
+  _probeStart0021Meta[0] = _last0021Meta[0];
+  _probeStart0021Meta[1] = _last0021Meta[1];
+  _probeStart0033Meta[0] = _last0033Meta[0];
+  _probeStart0033Meta[1] = _last0033Meta[1];
+
+  _probeState = ProbeState::Testing;
+  _probeStatus = "testet " + String(_probeCandidate.id);
+
+  Serial.println();
+  Serial.printf("[PROBE %03u/%u] Katalog #%u  %s  P%u\n",
+                (unsigned)(_probeOrderIndex + 1U), (unsigned)TestCandidateCatalog::COUNT,
+                (unsigned)_probeCandidate.catalogNumber, _probeCandidate.id, (unsigned)_probeCandidate.priority);
+  Serial.printf("[PROBE] Frame (%u B): %s\n", (unsigned)_probeCandidate.length,
+                TestCandidateCatalog::frameHex(_probeCandidate).c_str());
+}
+
+void UartManager::finishProbeCandidate() {
+  const uint32_t nowCounts[4] = {_cmd0021Count, _cmd0023Count, _cmd0031Count, _cmd0033Count};
+  const char* names[4] = {"0x0021", "0x0023", "0x0031", "0x0033"};
+  for (uint8_t i = 0; i < 4; ++i) {
+    const uint32_t baseline = _probeBaselineCounts[i];
+    if (baseline < 2U) continue;
+    const float expected = (float)baseline * ((float)PROBE_CANDIDATE_MS / (float)PROBE_BASELINE_MS);
+    const float actual = (float)(nowCounts[i] - _probeCandidateStartCounts[i]);
+    const float diff = fabsf(actual - expected);
+    const float limit = expected * 0.40f + 2.0f;
+    if (diff > limit) {
+      char msg[96];
+      snprintf(msg, sizeof(msg), "Rate %s: %.1f erwartet / %.0f beobachtet", names[i], expected, actual);
+      setProbeReaction(PROBE_REACTION_RATE_CHANGE, msg);
+    }
+  }
+
+  const uint32_t observedValid = _validPacketCount - _probeCandidateStartValid;
+  Serial.printf("[PROBE] Ende: gesendet=%lu, gueltige RX-Frames=%lu, Ergebnis=%s\n",
+                (unsigned long)_probeSentCount, (unsigned long)observedValid, probeReactionText().c_str());
+
+  ++_probeCompleted;
+  if (_probeReactionFlags != 0U && _probeStopOnReaction) {
+    _probeState = ProbeState::Idle;
+    _probeStatus = "TREFFER - gestoppt bei " + String(_probeCandidate.id) + ": " + probeReactionText();
+    Serial.printf("[PROBE] *** SWEEP GESTOPPT BEI TREFFER: #%u %s ***\n",
+                  (unsigned)_probeCandidate.catalogNumber, _probeCandidate.id);
+    return;
+  }
+
+  ++_probeOrderIndex;
+  if (_probeOrderIndex >= TestCandidateCatalog::COUNT) {
+    _probeState = ProbeState::Idle;
+    _probeStatus = "fertig: alle 1000 Kandidaten getestet";
+    Serial.println("[PROBE] ================================================");
+    Serial.println("[PROBE] FERTIG: alle 1000 Kandidaten getestet");
+    return;
+  }
+
+  _probeState = ProbeState::Gap;
+  _probeStateStartMillis = millis();
+  _probeStatus = "Pause vor naechstem Kandidaten";
+}
+
+void UartManager::observeProbeFrame(uint16_t command, const uint8_t* data, size_t dataLen, bool commandSeenBefore) {
+  if (_probeState != ProbeState::Testing) return;
+
+  if (command != 0x0021 && command != 0x0023 && command != 0x0031 && command != 0x0033 && !commandSeenBefore) {
+    if (!_probeFirstUnknownCommand) _probeFirstUnknownCommand = command;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "bisher nicht dekodierter Command 0x%04X", command);
+    setProbeReaction(PROBE_REACTION_NEW_COMMAND, msg);
+    return;
+  }
+
+  if (command == 0x0021 && dataLen == 14U && _probeStartHas0021) {
+    if (data[0] != _probeStart0021Meta[0] || data[1] != _probeStart0021Meta[1])
+      setProbeReaction(PROBE_REACTION_META_STATUS, "0x0021 Meta-Bytes geaendert");
+    for (uint8_t i = 0; i < 6; ++i) {
+      const uint16_t v = (uint16_t)data[2U + 2U * i] | ((uint16_t)data[3U + 2U * i] << 8U);
+      const uint16_t d = absDelta16(v, _probeStartFields0021[i]);
+      if (d > _probeMaxFieldDelta) _probeMaxFieldDelta = d;
+      if (d >= PROBE_VALUE_DELTA)
+        setProbeReaction(PROBE_REACTION_VALUE_CHANGE, "0x0021 Feldwert deutlich geaendert");
+    }
+  }
+  else if (command == 0x0031 && dataLen == 3U && _probeStartHas0031) {
+    const uint16_t v = (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
+    const uint16_t d = absDelta16(v, _probeStart0031Value);
+    if (d > _probeMaxFieldDelta) _probeMaxFieldDelta = d;
+    if (data[2] != _probeStart0031Status)
+      setProbeReaction(PROBE_REACTION_META_STATUS, "0x0031 Statusbyte geaendert");
+    if (d >= PROBE_VALUE_DELTA)
+      setProbeReaction(PROBE_REACTION_VALUE_CHANGE, "0x0031 Wert deutlich geaendert");
+  }
+  else if (command == 0x0033 && dataLen == 14U && _probeStartHas0033) {
+    if (data[0] != _probeStart0033Meta[0] || data[1] != _probeStart0033Meta[1])
+      setProbeReaction(PROBE_REACTION_META_STATUS, "0x0033 Meta-Bytes geaendert");
+    for (uint8_t i = 0; i < 6; ++i) {
+      const uint16_t v = (uint16_t)data[2U + 2U * i] | ((uint16_t)data[3U + 2U * i] << 8U);
+      const uint16_t d = absDelta16(v, _probeStartFields0033[i]);
+      if (d > _probeMaxFieldDelta) _probeMaxFieldDelta = d;
+      if (d >= PROBE_VALUE_DELTA)
+        setProbeReaction(PROBE_REACTION_VALUE_CHANGE, "0x0033 Feldwert deutlich geaendert");
+    }
+  }
+}
+
+void UartManager::serviceProbe() {
+  if (_probeState == ProbeState::Idle || !_serial) return;
+  const unsigned long now = millis();
+
+  if (_probeState == ProbeState::Baseline) {
+    if ((unsigned long)(now - _probeStateStartMillis) < PROBE_BASELINE_MS) return;
+    _probeBaselineCounts[0] = _cmd0021Count - _probeBaselineCounts[0];
+    _probeBaselineCounts[1] = _cmd0023Count - _probeBaselineCounts[1];
+    _probeBaselineCounts[2] = _cmd0031Count - _probeBaselineCounts[2];
+    _probeBaselineCounts[3] = _cmd0033Count - _probeBaselineCounts[3];
+    Serial.printf("[PROBE] Baseline 2 s: 0021=%lu, 0023=%lu, 0031=%lu, 0033=%lu\n",
+      (unsigned long)_probeBaselineCounts[0], (unsigned long)_probeBaselineCounts[1],
+      (unsigned long)_probeBaselineCounts[2], (unsigned long)_probeBaselineCounts[3]);
+    beginProbeCandidate();
+    return;
+  }
+
+  if (_probeState == ProbeState::Gap) {
+    if ((unsigned long)(now - _probeStateStartMillis) >= PROBE_GAP_MS) beginProbeCandidate();
+    return;
+  }
+
+  if (_probeState != ProbeState::Testing) return;
+
+  if ((unsigned long)(now - _probeStateStartMillis) >= PROBE_CANDIDATE_MS) {
+    finishProbeCandidate();
+    return;
+  }
+
+  const uint32_t baselineKnown = _probeBaselineCounts[0] + _probeBaselineCounts[1] + _probeBaselineCounts[2] + _probeBaselineCounts[3];
+  if (baselineKnown > 0U && (unsigned long)(now - _lastPacketMillis) >= PROBE_PAUSE_DETECT_MS) {
+    setProbeReaction(PROBE_REACTION_PAUSE, "D2 liefert seit mindestens 500 ms kein gueltiges Frame");
+  }
+
+  if ((long)(now - _probeNextSendMillis) >= 0) {
+    const size_t written = _serial->write(_probeCandidate.frame, _probeCandidate.length);
+    if (written != _probeCandidate.length) {
+      _probeState = ProbeState::Idle;
+      _probeStatus = "TX-Fehler bei " + String(_probeCandidate.id);
+      Serial.printf("[PROBE] FEHLER: nur %u/%u Bytes geschrieben - Sweep abgebrochen\n",
+                    (unsigned)written, (unsigned)_probeCandidate.length);
+      return;
+    }
+    ++_probeSentCount;
+    _probeNextSendMillis += PROBE_SEND_INTERVAL_MS;
+    if ((long)(now - _probeNextSendMillis) > (long)PROBE_SEND_INTERVAL_MS)
+      _probeNextSendMillis = now + PROBE_SEND_INTERVAL_MS;
+  }
+
+  if ((unsigned long)(now - _probeLastProgressMillis) >= 1000UL) {
+    _probeLastProgressMillis = now;
+    const unsigned elapsed = (unsigned)((now - _probeStateStartMillis) / 1000UL);
+    Serial.printf("[PROBE] %us/5s  TX=%lu  RX-valid=%lu  %s\n", elapsed,
+                  (unsigned long)_probeSentCount,
+                  (unsigned long)(_validPacketCount - _probeCandidateStartValid),
+                  _probeReactionFlags ? probeReactionText().c_str() : "keine Auffaelligkeit");
+  }
+}
+
 uint16_t UartManager::rawField(uint8_t index) const {
   return index < 6 ? _fields[index] : 0;
 }
@@ -521,7 +939,7 @@ String UartManager::jsonEscape(const String& value) {
 
 String UartManager::statusJson() const {
   String j;
-  j.reserve(2600);
+  j.reserve(3400);
   j += "{\"mode\":\"" + jsonEscape(modeText()) + "\",\"running\":" + String(_running ? "true" : "false");
   j += ",\"status\":\"" + jsonEscape(_status) + "\",\"total_bytes\":" + String((unsigned long)(_totalBytes & 0xFFFFFFFFULL));
   j += ",\"raw_hex\":\"" + jsonEscape(rawHex(256)) + "\",\"raw_ascii\":\"" + jsonEscape(rawAscii(256)) + "\"";
@@ -530,8 +948,17 @@ String UartManager::statusJson() const {
   j += ",\"last_route\":" + String(_lastRoute) + ",\"last_outer_length\":" + String(_lastOuterLength) + ",\"last_inner_type\":" + String(_lastInnerType);
   j += ",\"last_inner_length\":" + String(_lastInnerLength) + ",\"last_command\":" + String(_lastCommand) + ",\"last_data_length\":" + String(_lastDataLength) + ",\"checksum_ok\":" + String(_lastChecksumOk ? "true" : "false");
   j += ",\"has_main\":" + String(_hasMainPacket ? "true" : "false");
-  j += ",\"tx_ready\":" + String(txReady() ? "true" : "false") + ",\"tx_active\":" + String(_txActive ? "true" : "false");
+  j += ",\"tx_enabled\":" + String(_txEnabled ? "true" : "false");
+  j += ",\"tx_ready\":" + String(txReady() ? "true" : "false") + ",\"console_tx_ready\":" + String(consoleTxReady() ? "true" : "false") + ",\"tx_active\":" + String(_txActive ? "true" : "false");
+  j += ",\"tx_owner\":\"" + jsonEscape(txOwnerText()) + "\"";
   j += ",\"tx_status\":\"" + jsonEscape(_txStatus) + "\",\"tx_target\":" + String(_txTargetNormalized, 3) + ",\"tx_raw\":" + String(_txField5Raw) + ",\"tx_packets\":" + String(_txPacketCount);
+  j += ",\"probe_active\":" + String(_probeState != ProbeState::Idle ? "true" : "false");
+  j += ",\"probe_stop_on_reaction\":" + String(_probeStopOnReaction ? "true" : "false");
+  j += ",\"probe_status\":\"" + jsonEscape(_probeStatus) + "\",\"probe_completed\":" + String(_probeCompleted);
+  j += ",\"probe_order\":" + String(_probeOrderIndex + (_probeState == ProbeState::Testing ? 1U : 0U));
+  j += ",\"probe_catalog\":" + String(_probeCandidate.catalogNumber) + ",\"probe_id\":\"" + jsonEscape(String(_probeCandidate.id)) + "\"";
+  j += ",\"probe_priority\":" + String(_probeCandidate.priority) + ",\"probe_sent\":" + String(_probeSentCount);
+  j += ",\"probe_reaction\":" + String(_probeReactionFlags ? "true" : "false") + ",\"probe_reaction_text\":\"" + jsonEscape(probeReactionText()) + "\"";
   j += ",\"fields\":[";
   for (uint8_t i = 0; i < 6; ++i) {
     if (i) j += ',';

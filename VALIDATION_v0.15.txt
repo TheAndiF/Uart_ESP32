@@ -1,0 +1,76 @@
+Uart_Esp32 - Validation v0.15
+Date: 2026-09-20
+
+Scope
+-----
+Validation of the v0.15 UART architecture refactor and source package.
+
+Successful checks
+-----------------
+1. C++17 syntax check of UART implementation with local Arduino/ESP32 interface stubs:
+   g++ -std=c++17 -fsyntax-only -I/mnt/data/uart_stub -Isrc \
+       src/UartManager.cpp src/TestCandidateCatalog.cpp
+   Result: PASS
+
+2. C++17 syntax check of the main firmware translation unit with local framework stubs:
+   g++ -std=c++17 -fsyntax-only -I/mnt/data/uart_stub -Isrc src/main.cpp
+   Result: PASS
+
+3. Host-side UART console/TX-gating unit test:
+   - Console JSON contains exact HEX representation of received bytes.
+   - TX is locked by default.
+   - TX becomes ready only with running UART, explicit TX enable and a valid TX GPIO.
+   - Decoder field-5 replay and Probe-Runner reserve TX and block manual console TX.
+   - 8192-byte console ring retains the newest data and reports truncation to stale clients.
+   Result: PASS
+
+4. Static route/navigation checks:
+   - /uart/settings present
+   - /uart/console present
+   - /uart/decoder present
+   - /uart/probe present
+   - Existing /network, /mqtt, /battery, /deepsleep and /ota navigation/routes remain present.
+   Result: PASS
+
+5. Probe-Runner progress fix:
+   - Exactly one ++_probeOrderIndex increment remains in UartManager.cpp.
+   Result: PASS
+
+6. Legacy exclusive UART mode references:
+   - No UartManager::Mode / setMode / Mode:: references remain in the UART source.
+   - Other occurrences of the word "mode" belong to WiFi, Deep Sleep, display selection or the retained MQTT compatibility topic uart_mode.
+   Result: PASS
+
+Not performed / limitations
+---------------------------
+- PlatformIO is not installed in this execution environment; therefore no real ESP32 Arduino framework build was performed.
+- No ESP32-WROOM-32 / NodeMCU-32S hardware was connected; no flash, boot or electrical UART test was performed.
+- The BX3 physical console RX pin and signal level are still hardware-dependent and are not established by firmware changes.
+- Browser JavaScript was source-reviewed and C++ string syntax-checked, but not executed in a real ESP32-hosted browser session here.
+
+Required before deployment
+--------------------------
+1. Run: pio run -e uart_esp32_usb
+2. Flash the board and verify WLAN/network/MQTT/OTA settings remain available.
+3. Start UART with TX disabled first and confirm RX appears simultaneously in UART Konsole and UART Decoder.
+4. Measure target UART voltage level before enabling TX.
+5. Enable TX only after the target RX pin and electrical compatibility are confirmed.
+6. Verify UART Probe-Runner only on an authorized and safe test setup.
+
+Delivery/package checks
+-----------------------
+7. Unified firmware patch dry-run against the v0.14 snapshot with patch -p1:
+   Result: PASS
+
+8. Documentation render QA:
+   - DOCX rendered to 8 PNG pages and visually inspected page-by-page.
+   - PDF rendered independently to 8 PNG pages and visually inspected page-by-page.
+   - No clipping, overlap, broken tables or missing glyphs found.
+   Result: PASS
+
+9. ZIP package checks:
+   - Full project ZIP integrity: PASS
+   - Changed-files ZIP integrity: PASS
+   - Both ZIP archives contain exactly one top-level root folder named Uart_ESP32.
+   - .git metadata and stale .pio build artifacts are excluded from the full source package.
+   Result: PASS

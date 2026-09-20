@@ -1,0 +1,26 @@
+BL_Unify UART transport and split UART menus
+Date: 2026-09-20
+
+Summary:
+- Reworked the UART implementation from exclusive operating modes to one shared UART transport.
+- Routed every received UART byte in parallel to the raw buffer, universal console, st10 decoder and probe-runner evaluation.
+- Added independent TX enable/disable control; a locked TX starts HardwareSerial with TX=-1.
+- Added explicit TX ownership so the probe runner and field-5 replay block manual console TX while active.
+- Split the web UI into UART Settings, UART Console, UART Decoder and UART Probe-Runner.
+- Expanded the console to an 8192-byte ring buffer with Text, HEX and HEX+ASCII display plus text/HEX transmit input.
+- Kept WLAN, NTP, MQTT, battery, Deep Sleep and OTA functionality available.
+- Added MQTT UART status fields for enabled, tx_enabled and tx_owner.
+- Fixed the probe-runner candidate progress so the catalog index advances exactly once per completed candidate.
+- Updated documentation and validation for firmware version v0.15.
+
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- VALIDATION_v0.15.txt
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.15.md
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.15.docx
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.15.pdf
+- docs/2026-09-20 - Uart_Esp32 - Commit-Nachricht - UART-Architektur - v0.15.txt

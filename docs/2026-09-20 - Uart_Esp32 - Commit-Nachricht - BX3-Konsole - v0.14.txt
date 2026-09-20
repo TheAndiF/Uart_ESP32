@@ -1,0 +1,22 @@
+BL_Add BX3 bidirectional console mode
+Date: 2026-09-20
+
+Summary:
+- Added a persistent BX3 console mode with bidirectional UART transport.
+- Added a web terminal with incremental RX polling, configurable line endings, Enter/Ctrl+C/Ctrl+D/TAB controls, and optional hidden input.
+- Added guarded console TX routes and a 2048-byte console ring buffer.
+- Added local USB/UART0 console passthrough while keeping firmware diagnostics available.
+- Documented electrical safety, HTTP access limitations, setup, validation, and open hardware tests.
+- Bumped the firmware version to v0.14 / 0.14.0.
+
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- VALIDATION_v0.14.txt
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.14.md
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.14.docx
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.14.pdf
+- docs/2026-09-20 - Uart_Esp32 - Commit-Nachricht - BX3-Konsole - v0.14.txt

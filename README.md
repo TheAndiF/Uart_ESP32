@@ -2,7 +2,26 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.12
+## Stand v0.15
+
+
+**Neu v0.15:** Die UART-Architektur wurde von exklusiven Betriebsarten auf einen gemeinsamen UART-Basisbetrieb umgestellt. Der physische RX-Datenstrom wird jetzt gleichzeitig in den Rohdatenpuffer, den universellen UART-Konsolenpuffer und den st10-Decoder eingespeist. Dadurch bleiben Konsolendaten sichtbar, waehrend der Decoder aktiv ist. Die Weboberflaeche besitzt vier getrennte Hauptbereiche: **UART Einstellungen**, **UART Konsole**, **UART Decoder** und **UART Probe-Runner**.
+
+TX ist jetzt unabhaengig vom RX-Betrieb freigebbar. Ist TX gesperrt, startet `HardwareSerial` mit `TX=-1`, sodass der konfigurierte TX-GPIO nicht vom UART-Peripherieblock getrieben wird. Beim Upgrade von v0.14 oder aelter wird TX sicherheitshalber einmalig gesperrt und muss unter UART Einstellungen bewusst aktiviert werden. Probe-Runner und Feld-5-Replay reservieren TX; waehrenddessen kann die Webkonsole nicht dazwischen senden.
+
+Die UART Konsole wurde auf einen 8192-Byte-Ringpuffer erweitert und kann RX als **Text**, **HEX** oder **HEX + ASCII** darstellen. Fuer TX stehen Text/ASCII sowie frei eingebbare HEX-Bytes zur Verfuegung; CR, LF, CRLF, Ctrl+C, Ctrl+D, TAB und ESC werden weiterhin unterstuetzt. Der Probe-Runner hat eine eigene Seite. Ausserdem wurde ein Fehler im Kandidatenfortschritt behoben, durch den der Runner zuvor nach jedem Test zwei Katalogpositionen weiterzaehlen konnte. WLAN, MQTT, OTA, Batterie, Deep Sleep und die sonstigen Infrastrukturfunktionen bleiben unveraendert erhalten.
+
+
+### Historische Änderungshinweise
+
+Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.15-Architektur widersprechen, gilt die Beschreibung von v0.15 weiter oben.
+
+**Neu v0.14:** Zusaetzlich zu Raw/Sniffer und Protokoll-Decoder gibt es den Modus **BX3 Konsole**. Er setzt die im beigefuegten BX3/ESP32-Leitfaden beschriebene bidirektionale UART-Verbindung fuer Boottext, Login und Shell-Eingaben um. Die Weboberflaeche `/uart/console` zeigt einen laufenden Terminalpuffer, kann Text mit bewusst waehlbarem Zeilenabschluss (CR, LF, CRLF oder keiner) senden und stellt Enter, Ctrl+C, Ctrl+D und TAB als eigene Aktionen bereit. Eine Passwort-Eingabe kann im Browser verdeckt werden; eingegebene Zeichen werden nicht persistent gespeichert. Der Modus verwendet die normalen UART-Einstellungen und ist damit auf 115200/8N1 einstellbar, wie es der Leitfaden als Arbeitswert fuer die BX3-Konsole nennt. RX-Daten werden ausserdem auf den lokalen seriellen USB/UART0-Monitor gespiegelt; dort koennen Firmware-Diagnosemeldungen dazwischen erscheinen. Bytes, die lokal ueber USB/UART0 eingegeben werden, werden im Konsolenmodus unveraendert zum Ziel-UART weitergereicht.
+
+Die Webkonsole besitzt bewusst keine eigene Authentifizierung oder TLS-Schicht. Sie sollte deshalb nur in einem vertrauenswuerdigen Netz verwendet werden. Der physische BX3-RX-Pin und die Pegel muessen weiterhin vor aktivem TX sicher bestimmt werden; BX3-VCC darf nicht mit der ESP32-Versorgung verbunden werden.
+
+
+**Neu v0.13:** Der UART-Decoder besitzt jetzt einen automatischen Probe-Runner fuer den vollstaendigen Katalog mit 1000 Testkandidaten. Die Frames werden zur Laufzeit exakt aus den Familien A/B/C/D erzeugt, sodass keine grosse statische Hexliste im RAM noetig ist. Vor dem Sweep wird D2 zwei Sekunden als Baseline beobachtet. Danach wird jeder Kandidat 5 Sekunden lang alle 250 ms gesendet (ca. 20 Aussendungen), waehrend RX und Decoder weiterlaufen. Der serielle Monitor protokolliert Kandidaten-ID, Katalognummer, Prioritaet, Hexframe, Fortschritt und erkannte Reaktionen. Geprueft werden neue Commands, deutliche Wert-/Meta-/Statusaenderungen, Ratenabweichungen und ein Aussetzen der D2-Ausgabe. Im Webmonitor kann der Sweep entweder bei der ersten Auffaelligkeit stoppen oder alle Kandidaten durchlaufen. Die Testreihenfolge folgt P0 -> P1 -> P2 -> P3. Die historischen SLOW/INIT-Bezeichnungen der D-Familie bleiben zur Rueckverfolgbarkeit erhalten; fuer den automatischen Runner gilt jedoch einheitlich die neue 250-ms/5-s-Vorgabe.
 
 **Neu v0.12:** Der Decoder wurde auf die st10-Spezifikation umgestellt. Er validiert jetzt den aeusseren Frame `FF FB Route OuterLength`, den inneren Frame `FF FD/FE InnerLength Command DATA XOR`, die Laengenbeziehung `OuterLength = InnerLength + 4` sowie die XOR-Pruefsumme ab `InnerLength` bis zum letzten Datenbyte. Bekannte Commands `0x0021`, `0x0023`, `0x0031` und `0x0033` werden getrennt gezaehlt und dekodiert. Die bisherigen Felder 1..6 stammen nun explizit aus Command `0x0021`; Feld 1..5 bleiben kalibrier-/normierbar. Der vorhandene Feld-5-TX-Replay bleibt erhalten, ist aber als experimentell markiert, weil st10 fuer D4/RX des Zielgeraets noch kein gueltiges Eingangsprotokoll belegt.
 
@@ -132,50 +151,101 @@ In `arduino_secrets.h` koennen optional folgende Werte gesetzt werden:
 ```
 
 
-## UART Monitor / Protokoll-Decoder (v0.7)
+## UART Einstellungen, UART Konsole, UART Decoder und UART Probe-Runner
 
-Die UART-Funktion besitzt ab v0.8 zwei getrennte Seiten: `http://<ESP-IP>/uart/monitor` fuer die reine Liveanzeige und `http://<ESP-IP>/uart/settings` fuer die Konfiguration. Die Funktion ist in drei Betriebsarten aufgeteilt:
-
-- **Aus** - keine zusaetzliche UART-Schnittstelle aktiv.
-- **Raw / Sniffer** - empfangene Bytes werden ungefiltert in einem Ringpuffer erfasst und im Webinterface als HEX und ASCII angezeigt.
-- **Protokoll-Decoder** - zusaetzlich zur Rohdatenanzeige wird das in der Messunterlage `ESP32_UART_Protokoll_Entschluesselung` beschriebene Paketformat ausgewertet.
-
-Raw und Protokoll-Decoder sind Dauerbetriebsarten. Die Verarbeitung erfolgt in der normalen ESP32-Hauptschleife und ist nicht an eine offene Browserseite oder eine feste Messanzahl gebunden. Der Ringpuffer bleibt begrenzt, indem nur die aeltesten Rohbytes ueberschrieben werden; Decoderwerte und Zaehler laufen weiter.
-
-Konfigurierbar und in NVS gespeichert werden Hardware-UART 1 oder 2, RX-GPIO, optionaler TX-GPIO, Baudrate und UART-Format (`8N1`, `8E1`, `8O1`, `8N2`). UART0 bleibt fuer den seriellen Debug-Monitor reserviert. GPIO6..11 werden wegen des Flashs gesperrt; GPIO1/3 bleiben fuer UART0 frei. GPIO34..39 koennen nur als RX verwendet werden.
-
-Der Decoder synchronisiert auf `FF FB`, liest Typ und Laenge, sammelt `4 + Laenge` Bytes und prueft die XOR-Pruefsumme ueber Byte 6 bis zum Byte vor der Pruefsumme. Fuer das bestaetigte Hauptpaket Typ `0x10`, Laenge `0x15` werden sechs 16-Bit-Little-Endian-Felder ab Byte 12 dekodiert. Feld 1 bis Feld 5 werden mit separaten Min-/Mitte-/Max-Werten auf `-1.0 ... +1.0` normiert und koennen mit einer einstellbaren Totzone stabilisiert werden. Feld 6 bleibt bewusst als Rohwert sichtbar.
-
-### Aenderbare Feldnamen bei unveraenderter technischer Kennung
-
-Fuer **Feld 1 bis Feld 6** gibt es jeweils ein freies Alias-Textfeld. Der technische Name bleibt dabei immer sichtbar. Ein Alias ersetzt den Feldnamen also nicht, sondern wird nur ergaenzt. Beispiel:
+Seit v0.15 existiert nur noch **ein gemeinsamer Hardware-UART-Basisbetrieb**. Konsole, Decoder und Probe-Runner sind keine gegenseitig ausschliessenden Modi mehr. Solange der UART laeuft, wird jedes empfangene Byte parallel an folgende Verbraucher verteilt:
 
 ```text
-Feld 1 - Roll
-Feld 2 - Pitch
-Feld 3 - noch unbekannt
+UART RX
+  |
+  +--> Rohdaten-Ringpuffer
+  +--> UART Konsole
+  +--> st10 UART Decoder
+  +--> Probe-Runner-Auswertung
 ```
 
-Solange die Bedeutung nicht bestaetigt ist, kann das Alias-Feld leer bleiben oder z. B. `noch unbekannt` enthalten. Die Aliase werden in NVS gespeichert und auch ueber MQTT unter `<Basis>/uart/fieldN/alias` veroeffentlicht.
+Die Startseite bietet dafuer vier getrennte Menues:
+
+- **UART Einstellungen** - Hardware-UART, RX/TX-GPIO, Baudrate, Frameformat, UART-Autostart und separate TX-Freigabe.
+- **UART Konsole** - universelles Live-Terminal mit Text-, HEX- und HEX+ASCII-Anzeige sowie manueller TX-Eingabe.
+- **UART Decoder** - st10-Decoder, Feldwerte, Raw-Daten, Aliase/Kalibrierung und experimenteller Feld-5-Replay.
+- **UART Probe-Runner** - automatischer Test der 1000 Kandidaten mit eigener Laufzeit- und Reaktionsanzeige.
+
+WLAN, NTP, MQTT, Batterie, Deep Sleep und OTA bleiben davon unabhaengig und unveraendert erhalten.
+
+### UART Einstellungen und TX-Freigabe
+
+In NVS gespeichert werden UART-Autostart, Hardware-UART 1 oder 2, RX-GPIO, konfigurierter TX-GPIO, separate TX-Freigabe, Baudrate und UART-Format (`8N1`, `8E1`, `8O1`, `8N2`). UART0 bleibt fuer den seriellen Debug-Monitor reserviert. GPIO6..11 werden wegen des Flashs gesperrt; GPIO1/3 bleiben fuer UART0 frei. GPIO34..39 koennen nur als RX verwendet werden.
+
+**TX-Sicherheitslogik:** Ein eingetragener TX-GPIO bedeutet noch nicht, dass der ESP32 sendet. Erst die Option **TX-Ausgang bewusst freigeben** aktiviert die Senderichtung. Solange sie aus ist, wird der Hardware-UART mit `TX=-1` gestartet. Beim ersten Start nach einem Upgrade von v0.14 oder aelter wird TX sicherheitshalber deaktiviert, auch wenn zuvor ein TX-GPIO hinterlegt war.
+
+### Universelle UART Konsole
+
+Die Seite `/uart/console` liest denselben RX-Datenstrom wie der Decoder. Deshalb muss nicht mehr auf einen eigenen Konsolenmodus umgeschaltet werden. Der Konsolenringpuffer fasst 8192 Bytes. Die Browserseite fragt neue Bytes inkrementell anhand einer Sequenznummer ab.
+
+Anzeige:
+
+- Text
+- HEX
+- HEX + ASCII
+
+TX-Eingabe:
+
+- Text/ASCII
+- frei eingebbare HEX-Bytes, z. B. `48 65 6C 6C 6F 0D`
+- waehbarer Zeilenabschluss `CR`, `LF`, `CRLF` oder keiner
+- Ctrl+C, Ctrl+D, TAB und ESC
+- optional verdeckte Texteingabe fuer Passwoerter
+
+Die Konsole darf nur senden, wenn UART laeuft, TX freigegeben ist, ein gueltiger TX-GPIO gesetzt ist und kein anderer aktiver Sender TX reserviert. Probe-Runner und Feld-5-Replay sperren manuelle Konsolen-TX-Ausgaben fuer ihre Laufzeit.
+
+Der BX3-Leitfaden nennt fuer die dort beobachtete Linux-Konsole **115200 Baud / 8N1** als Arbeitswert. Der physische BX3-Console-RX-Pin und die elektrischen Pegel muessen weiterhin vor aktivem TX sicher bestimmt werden. BX3-VCC darf nicht mit der ESP32-Versorgung verbunden werden.
+
+**HTTP-Hinweis:** Das Webinterface besitzt keine eigene TLS-/Login-Schicht. Login-Daten oder Shell-Zugriff nur in einem vertrauenswuerdigen Netz verwenden.
+
+### UART Decoder
+
+Der Decoder verarbeitet RX permanent parallel zur Konsole. Er synchronisiert auf `FF FB`, prueft Outer-/Inner-Laengen und die XOR-Pruefsumme und dekodiert die bekannten Commands `0x0021`, `0x0023`, `0x0031` und `0x0033`. Feld 1 bis 5 des Commands `0x0021` koennen weiterhin kalibriert und auf `-1.0 ... +1.0` normiert werden; Feld 6 bleibt als Rohwert sichtbar. Die frei editierbaren Aliase und Kalibrierwerte werden weiterhin in NVS gespeichert.
+
+Der vorhandene Feld-5-Replay bleibt als experimentelle TX-Funktion erhalten. Er benoetigt TX-Freigabe und ein frisches gueltiges `0x0021`-Paket. Waehren eines Probe-Runs ist diese Funktion blockiert.
+
+### UART Probe-Runner
+
+Der automatische Runner hat ab v0.15 eine eigene Seite `/uart/probe`. Er zeichnet zuerst 2 Sekunden Baseline auf und testet anschliessend jeden Kandidaten 5 Sekunden lang mit einem Sendeintervall von 250 ms. Die Reihenfolge folgt P0 -> P1 -> P2 -> P3. Der Decoder wertet parallel neue Commands, Wert-/Meta-/Statusaenderungen, Ratenabweichungen und Empfangspausen aus.
+
+Der Runner benoetigt einen laufenden UART, einen gueltigen TX-GPIO und die separate TX-Freigabe. Solange der Runner aktiv ist, besitzt er die TX-Reservierung. Die Konsole bleibt fuer RX sichtbar, kann aber nicht senden.
+
+In v0.15 wurde ausserdem der Kandidatenfortschritt korrigiert: Nach einem abgeschlossenen Kandidaten wird der Testindex genau einmal erhoeht.
 
 ### UART-Webrouten
 
 | Route | Funktion |
 |---|---|
-| `/uart/status` | Live-Status als JSON fuer die Monitorseite |
-| `/uart/settings` | UART-Konfiguration, Feld-Aliase und Kalibrierung |
-| `/uart/monitor` | Reine UART-Liveansicht mit Decoderwerten und Raw-Puffer |
-| `/uart` | Kompatibler Redirect auf `/uart/monitor` |
-| `/save_uart` | Einstellungen, Aliase und Kalibrierwerte speichern; UART neu starten |
-| `/uart_clear` | Rohdaten-Ringpuffer leeren |
+| `/uart/status` | Gemeinsamer UART-/Decoder-/Probe-Livestatus als JSON |
+| `/uart/settings` | Hardware-UART und TX-Freigabe |
+| `/uart/console` | Universelle UART-Webkonsole |
+| `/uart/console/data` | Inkrementelle RX-Daten mit Text- und HEX-Darstellung |
+| `/uart/console/send` | Text- oder HEX-Daten senden, POST |
+| `/uart/console/control` | Ctrl+C/Ctrl+D/TAB/ESC senden, POST |
+| `/uart/console/clear` | Konsolenringpuffer leeren, POST |
+| `/uart/decoder` | st10-Decoder, Raw-Daten und Decoder-Einstellungen |
+| `/save_uart_decoder` | Aliase/Kalibrierung speichern, POST |
+| `/uart/probe` | UART Probe-Runner |
+| `/uart/probe/start_hit` | Sweep starten und beim ersten Treffer stoppen, POST |
+| `/uart/probe/start_all` | Alle 1000 Kandidaten testen, POST |
+| `/uart/probe/stop` | Probe-Runner stoppen, POST |
+| `/uart/monitor` | Kompatibler Redirect auf `/uart/decoder` |
+| `/uart` | Kompatibler Redirect auf `/uart/decoder` |
+| `/save_uart` | Hardware-UART/TX-Freigabe speichern und UART neu starten, POST |
+| `/uart_clear` | Rohdatenpuffer / RX-Bytezaehler leeren, POST |
 
 ### UART-MQTT-Status
 
-Unter `<Basis>/uart/` werden mit dem normalen Heartbeat unter anderem Modus, Status, Byte-/Paketzaehler sowie bei einem dekodierten Hauptpaket `field1` bis `field6` als Rohwerte veroeffentlicht. Fuer Feld 1 bis 5 wird zusaetzlich `norm` ausgegeben; die frei editierbaren Aliasnamen werden separat retained veroeffentlicht. Rohdaten-HEX-Streams werden absichtlich nicht per MQTT gespiegelt.
+Unter `<Basis>/uart/` werden weiterhin Status, Byte-/Paketzaehler und dekodierte Felder veroeffentlicht. Neu sind `enabled`, `tx_enabled` und `tx_owner`. Das bisherige Topic `mode` bleibt aus Kompatibilitaetsgruenden bestehen und meldet ab v0.15 `UART Basisbetrieb` bzw. `Aus`.
 
 ### Elektrischer Hinweis
 
-Fuer erste Messungen sollte nur RX verbunden werden. ESP32-GPIOs arbeiten mit 3,3-V-Logik und sind nicht 5-V-tolerant. Gemeinsame Masse herstellen und den High-Pegel der Ziel-UART vor dem Anschluss pruefen.
+Die universelle Konsole ist softwareseitig fuer TTL-UART ausgelegt. RS-232, RS-485 oder abweichende Spannungspegel benoetigen passende Transceiver/Pegelwandler. Fuer erste Messungen TX gesperrt lassen, gemeinsame Masse herstellen und den High-Pegel der Ziel-UART messen. ESP32-GPIOs sind nicht 5-V-tolerant.
 
 ## Batterie / ADC
 
@@ -206,9 +276,16 @@ Vor dem Anschließen bitte sicherstellen, dass die maximale Spannung am ADC-Pin 
 | `/wifi_rescan` | WLAN-Scan neu starten |
 | `/clear_wifi_nvs` | gespeichertes NVS-WLAN löschen, POST |
 | `/uart/status` | UART Live-Status als JSON |
-| `/uart/settings` | UART-Konfiguration, Feld-Aliase und Kalibrierung |
-| `/uart/monitor` | UART Raw/Sniffer und Protokoll-Decoder Liveanzeige |
-| `/uart` | Redirect auf `/uart/monitor` |
+| `/uart/settings` | Hardware-UART, Autostart und TX-Freigabe |
+| `/uart/decoder` | UART Decoder, Raw-Daten und Decoder-Einstellungen |
+| `/uart/monitor` | kompatibler Redirect auf `/uart/decoder` |
+| `/uart/console` | Universelle bidirektionale UART-Webkonsole |
+| `/uart/console/data` | inkrementelle Terminaldaten als JSON |
+| `/uart/console/send` | Konsoleneingabe senden, POST |
+| `/uart/console/control` | Steuerzeichen senden, POST |
+| `/uart/console/clear` | Konsolenpuffer leeren, POST |
+| `/uart/probe` | UART Probe-Runner |
+| `/uart` | Redirect auf `/uart/decoder` |
 | `/mqtt` | MQTT-Einstellungen / Verbindungstest |
 | `/battery` | ADC-Batteriemessung für Deep Sleep |
 | `/deepsleep` | Deep-Sleep-Konfiguration |

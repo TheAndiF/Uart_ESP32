@@ -1,0 +1,10 @@
+Uart_Esp32 v0.13 - Validierung
+
+- TestCandidateCatalog: 1000/1000 generierte Kandidaten (ID, Prioritaet und Hexframe)
+  gegen den aus UART_Testkandidaten_st10_1000(1).pdf extrahierten Katalog verglichen:
+  keine Abweichung.
+- Testreihenfolge deckt alle Katalognummern 1..1000 genau einmal ab.
+- UartManager.cpp und TestCandidateCatalog.cpp mit einem lokalen Arduino-API-Stub
+  per g++ -std=c++17 -fsyntax-only geprueft: keine Syntaxfehler.
+- Ein echter PlatformIO/ESP32-Build konnte in der Ausfuehrungsumgebung nicht gestartet werden,
+  weil PlatformIO/ESP32-Toolchain dort nicht installiert ist.
