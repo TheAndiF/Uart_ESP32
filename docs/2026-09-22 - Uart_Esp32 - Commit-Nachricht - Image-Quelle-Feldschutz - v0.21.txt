@@ -1,0 +1,22 @@
+BL_Protect image source field
+Date: 2026-09-22
+Summary:
+- Prevented the UART Image-Transfer status poll from overwriting the source input while the user is editing it.
+- Preserved snapshot source entries such as /tmp/mtd7.img.gz until the user starts or restarts the transfer.
+- Bumped firmware metadata to v0.21 / 0.21.0.
+- Removed stale *.rej patch-reject artifacts from the project package.
+Changed files:
+- README.md
+- src/main.cpp
+- src/ConfigDefaults.h
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.21.md
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.21.docx
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.21.pdf
+- docs/2026-09-22 - Uart_Esp32 - Commit-Nachricht - Image-Quelle-Feldschutz - v0.21.txt
+- VALIDATION_v0.21.txt
+Removed files:
+- README.md.rej
+- src/UartManager.h.rej
+- src/UartManager.cpp.rej
+- src/main.cpp.rej
+- src/ConfigDefaults.h.rej

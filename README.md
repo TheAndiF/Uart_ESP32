@@ -2,6 +2,12 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
+## Stand v0.21
+
+**Neu v0.21:** Die UART-Image-Transfer-Seite ueberschreibt das Quellenfeld nicht mehr bei jeder 400-ms-Statusabfrage. Der Browser markiert das Feld als lokal geaendert, sobald es fokussiert oder bearbeitet wird. Statusdaten aktualisieren weiterhin die getrennte Anzeige "Quelle", aber nicht mehr das Eingabefeld, solange der Benutzer dort z. B. `/tmp/mtd7.img.gz` eintraegt. Erst beim Start oder Neustart wird der aktuell eingetragene Wert uebernommen und getrimmt. Dadurch springt die Anzeige nicht mehr auf den letzten Firmware-Statuswert wie `/dev/mtd7ro` zurueck.
+
+Die v0.20-Funktion fuer Snapshot-Dateien bleibt unveraendert erhalten; WLAN, UART-Konsole, Decoder, Probe-Runner, OTA, MQTT, Batterie und Deep-Sleep wurden nicht funktional geaendert. Zusaetzlich wurden versehentlich mitgelieferte Patch-Reject-Artefakte (`*.rej`) aus dem Projektpaket entfernt.
+
 ## Stand v0.20
 
 
@@ -35,7 +41,7 @@ Die UART Konsole wurde auf einen 8192-Byte-Ringpuffer erweitert und kann RX als 
 
 ### Historische Änderungshinweise
 
-Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.20-Architektur widersprechen, gilt die Beschreibung von v0.20 weiter oben.
+Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.21-Architektur widersprechen, gilt die Beschreibung von v0.21 weiter oben.
 
 **Neu v0.14:** Zusaetzlich zu Raw/Sniffer und Protokoll-Decoder gibt es den Modus **BX3 Konsole**. Er setzt die im beigefuegten BX3/ESP32-Leitfaden beschriebene bidirektionale UART-Verbindung fuer Boottext, Login und Shell-Eingaben um. Die Weboberflaeche `/uart/console` zeigt einen laufenden Terminalpuffer, kann Text mit bewusst waehlbarem Zeilenabschluss (CR, LF, CRLF oder keiner) senden und stellt Enter, Ctrl+C, Ctrl+D und TAB als eigene Aktionen bereit. Eine Passwort-Eingabe kann im Browser verdeckt werden; eingegebene Zeichen werden nicht persistent gespeichert. Der Modus verwendet die normalen UART-Einstellungen und ist damit auf 115200/8N1 einstellbar, wie es der Leitfaden als Arbeitswert fuer die BX3-Konsole nennt. RX-Daten werden ausserdem auf den lokalen seriellen USB/UART0-Monitor gespiegelt; dort koennen Firmware-Diagnosemeldungen dazwischen erscheinen. Bytes, die lokal ueber USB/UART0 eingegeben werden, werden im Konsolenmodus unveraendert zum Ziel-UART weitergereicht.
 

@@ -1,0 +1,29 @@
+Uart_Esp32 v0.21 - Validierungsprotokoll
+Datum: 2026-09-22
+
+Durchgefuehrte Pruefungen:
+- Projektstand v0.20 als Ausgangsbasis verwendet.
+- Firmwarestand in src/main.cpp auf v0.21 und in src/ConfigDefaults.h auf 0.21.0 angehoben.
+- Image-Transfer-JavaScript angepasst:
+  - imgSourceDirty eingefuehrt.
+  - Eingabefeld img_source wird bei Fokus oder Eingabe als lokal bearbeitet markiert.
+  - pollImage() schreibt Statuswerte nicht mehr in ein bearbeitetes oder fokussiertes Quellenfeld.
+  - Start und Neustart trimmen den aktuell eingetragenen Wert und uebernehmen ihn erst dann.
+- JavaScript-Syntax aller eingebetteten Webskripte mit node --check geprueft.
+- Alte *.rej-Patchartefakte aus dem v0.21-Projektpaket entfernt.
+- Patch gegen v0.20 erzeugt.
+- Vollstaendiges ZIP und geaenderte-Dateien-ZIP erstellt.
+- DOCX-Dokumentation erzeugt, zu PDF gerendert und visuell kontrolliert.
+
+Nicht durchgefuehrt:
+- Kein echter PlatformIO-Build, da PlatformIO in der Arbeitsumgebung nicht installiert ist.
+- Kein Flashen auf einen ESP32.
+- Kein realer Browser-/BX3-Test nach dem Flashen.
+
+Empfohlene naechste Tests:
+1. pio run -e uart_esp32_usb
+2. Firmware flashen.
+3. UART Image-Transfer oeffnen.
+4. In das Quellenfeld /tmp/mtd7.img.gz eintragen.
+5. 5-10 Sekunden warten und pruefen, dass der Wert nicht wieder auf /dev/mtd7ro springt.
+6. Snapshot-Datei uebertragen und SHA256 am PC vergleichen.
