@@ -2,7 +2,10 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.15
+## Stand v0.16
+
+
+**Neu v0.16:** Die universelle **UART Konsole** besitzt jetzt ein Häkchenfeld **Autoscroll bei neuen UART-Daten**. Autoscroll ist beim ersten Aufruf standardmaessig aktiviert. Ist das Häkchen gesetzt, springt das Terminal nach jeder Aktualisierung automatisch ans Ende. Wird es deaktiviert, bleibt die aktuelle Scrollposition stehen, waehrend neue UART-Daten weiterhin empfangen und in den Browserpuffer uebernommen werden. Die Einstellung ist reine Browserdarstellung und wird per `localStorage` unter `uartConsoleAutoscroll` gespeichert; sie veraendert weder UART- noch NVS-Einstellungen auf dem ESP32. Beim erneuten Aktivieren wird sofort zum Ende des Terminals gescrollt.
 
 
 **Neu v0.15:** Die UART-Architektur wurde von exklusiven Betriebsarten auf einen gemeinsamen UART-Basisbetrieb umgestellt. Der physische RX-Datenstrom wird jetzt gleichzeitig in den Rohdatenpuffer, den universellen UART-Konsolenpuffer und den st10-Decoder eingespeist. Dadurch bleiben Konsolendaten sichtbar, waehrend der Decoder aktiv ist. Die Weboberflaeche besitzt vier getrennte Hauptbereiche: **UART Einstellungen**, **UART Konsole**, **UART Decoder** und **UART Probe-Runner**.
@@ -14,7 +17,7 @@ Die UART Konsole wurde auf einen 8192-Byte-Ringpuffer erweitert und kann RX als 
 
 ### Historische Änderungshinweise
 
-Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.15-Architektur widersprechen, gilt die Beschreibung von v0.15 weiter oben.
+Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.16-Architektur widersprechen, gilt die Beschreibung von v0.16 weiter oben.
 
 **Neu v0.14:** Zusaetzlich zu Raw/Sniffer und Protokoll-Decoder gibt es den Modus **BX3 Konsole**. Er setzt die im beigefuegten BX3/ESP32-Leitfaden beschriebene bidirektionale UART-Verbindung fuer Boottext, Login und Shell-Eingaben um. Die Weboberflaeche `/uart/console` zeigt einen laufenden Terminalpuffer, kann Text mit bewusst waehlbarem Zeilenabschluss (CR, LF, CRLF oder keiner) senden und stellt Enter, Ctrl+C, Ctrl+D und TAB als eigene Aktionen bereit. Eine Passwort-Eingabe kann im Browser verdeckt werden; eingegebene Zeichen werden nicht persistent gespeichert. Der Modus verwendet die normalen UART-Einstellungen und ist damit auf 115200/8N1 einstellbar, wie es der Leitfaden als Arbeitswert fuer die BX3-Konsole nennt. RX-Daten werden ausserdem auf den lokalen seriellen USB/UART0-Monitor gespiegelt; dort koennen Firmware-Diagnosemeldungen dazwischen erscheinen. Bytes, die lokal ueber USB/UART0 eingegeben werden, werden im Konsolenmodus unveraendert zum Ziel-UART weitergereicht.
 
@@ -199,6 +202,8 @@ TX-Eingabe:
 
 Die Konsole darf nur senden, wenn UART laeuft, TX freigegeben ist, ein gueltiger TX-GPIO gesetzt ist und kein anderer aktiver Sender TX reserviert. Probe-Runner und Feld-5-Replay sperren manuelle Konsolen-TX-Ausgaben fuer ihre Laufzeit.
 
+**Autoscroll v0.16:** In der Konsole kann **Autoscroll bei neuen UART-Daten** per Häkchen ein- oder ausgeschaltet werden. Bei aktiviertem Autoscroll folgt die Ansicht automatisch dem neuesten Datenende; bei deaktiviertem Autoscroll bleibt die manuell gewählte Scrollposition erhalten. Der Zustand wird nur im jeweiligen Browser per `localStorage` gespeichert und nicht in der ESP32-NVS abgelegt.
+
 Der BX3-Leitfaden nennt fuer die dort beobachtete Linux-Konsole **115200 Baud / 8N1** als Arbeitswert. Der physische BX3-Console-RX-Pin und die elektrischen Pegel muessen weiterhin vor aktivem TX sicher bestimmt werden. BX3-VCC darf nicht mit der ESP32-Versorgung verbunden werden.
 
 **HTTP-Hinweis:** Das Webinterface besitzt keine eigene TLS-/Login-Schicht. Login-Daten oder Shell-Zugriff nur in einem vertrauenswuerdigen Netz verwenden.
@@ -208,6 +213,7 @@ Der BX3-Leitfaden nennt fuer die dort beobachtete Linux-Konsole **115200 Baud / 
 Der Decoder verarbeitet RX permanent parallel zur Konsole. Er synchronisiert auf `FF FB`, prueft Outer-/Inner-Laengen und die XOR-Pruefsumme und dekodiert die bekannten Commands `0x0021`, `0x0023`, `0x0031` und `0x0033`. Feld 1 bis 5 des Commands `0x0021` koennen weiterhin kalibriert und auf `-1.0 ... +1.0` normiert werden; Feld 6 bleibt als Rohwert sichtbar. Die frei editierbaren Aliase und Kalibrierwerte werden weiterhin in NVS gespeichert.
 
 Der vorhandene Feld-5-Replay bleibt als experimentelle TX-Funktion erhalten. Er benoetigt TX-Freigabe und ein frisches gueltiges `0x0021`-Paket. Waehren eines Probe-Runs ist diese Funktion blockiert.
+
 
 ### UART Probe-Runner
 

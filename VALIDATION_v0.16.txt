@@ -1,0 +1,79 @@
+Uart_Esp32 - Validation v0.16
+Date: 2026-09-20
+
+Scope
+-----
+Validation of the v0.16 UART console autoscroll integration and source package.
+
+Successful checks
+-----------------
+1. C++17 syntax check of UART implementation with local Arduino/ESP32 interface stubs:
+   g++ -std=c++17 -fsyntax-only -I/mnt/data/uart_stub -Isrc \
+       src/UartManager.cpp src/TestCandidateCatalog.cpp
+   Result: PASS
+
+2. C++17 syntax check of the main firmware translation unit with local framework stubs:
+   g++ -std=c++17 -fsyntax-only -I/mnt/data/uart_stub -Isrc src/main.cpp
+   Result: PASS
+
+3. UART console autoscroll source checks:
+   - Checkbox id "autoscroll" exists and is checked by default.
+   - render() scrolls to the terminal bottom only when autoscroll is checked.
+   - Re-enabling autoscroll immediately scrolls to the terminal bottom.
+   - Disabling autoscroll does not stop UART reception or browser buffer ingestion.
+   Result: PASS
+
+4. Browser persistence checks:
+   - State is loaded from localStorage key "uartConsoleAutoscroll" when available.
+   - State is stored as "1" or "0" on checkbox changes.
+   - No ESP32 NVS or UART configuration value is modified by this display preference.
+   Result: PASS
+
+5. JavaScript syntax check:
+   - UART console raw JavaScript block extracted from src/main.cpp.
+   - node --check completed without syntax errors.
+   Result: PASS
+
+6. Existing functionality preservation checks:
+   - /uart/settings present
+   - /uart/console present
+   - /uart/decoder present
+   - /uart/probe present
+   - Existing /network, /mqtt, /battery, /deepsleep and /ota navigation remains present.
+   - src/UartManager.cpp and src/UartManager.h are byte-identical to v0.15.
+   Result: PASS
+
+Not performed / limitations
+---------------------------
+- PlatformIO is not installed in this execution environment; therefore no real ESP32 Arduino framework build was performed.
+- No ESP32-WROOM-32 / NodeMCU-32S hardware was connected; no flash, boot or electrical UART test was performed.
+- No real browser was connected to an ESP32 web server. Browser behavior was validated by source assertions and JavaScript syntax checking.
+
+Required before deployment
+--------------------------
+1. Run: pio run -e uart_esp32_usb
+2. Flash the board and open UART Konsole.
+3. Verify Autoscroll is enabled on first use and follows new RX data.
+4. Disable Autoscroll, scroll upward, and verify new RX data does not move the current scroll position.
+5. Re-enable Autoscroll and verify the terminal immediately jumps to the newest data.
+6. Reload the page and verify the browser remembers the selected Autoscroll state.
+7. Verify WLAN, MQTT, OTA and the other existing project functions as part of the hardware smoke test.
+
+Delivery/package checks
+-----------------------
+7. Source patch dry-run and apply against the v0.15 project using patch -p1:
+   - README.md, src/ConfigDefaults.h, src/main.cpp and VALIDATION_v0.16.txt verified after apply.
+   Result: PASS
+
+8. Documentation render QA:
+   - DOCX rendered to 8 PNG pages and visually inspected page-by-page.
+   - PDF rendered independently to 8 PNG pages and visually inspected page-by-page.
+   - No clipping, overlap, broken tables or missing glyphs found.
+   Result: PASS
+
+9. ZIP package checks:
+   - Full project ZIP integrity: PASS
+   - Changed-files ZIP integrity: PASS
+   - Both ZIP archives contain exactly one top-level root folder named Uart_ESP32.
+   - .git metadata and .pio build artifacts are excluded from the delivered ZIP archives.
+   Result: PASS

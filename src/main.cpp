@@ -13,7 +13,7 @@
 #include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
-static const char* FW_BUILD_VERSION = "v0.15";
+static const char* FW_BUILD_VERSION = "v0.16";
 static const char* TZ_CET_CEST = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 AsyncWebServer server(80);
@@ -755,7 +755,9 @@ static String uartConsolePage() {
   h += "<p><b>RX:</b> <span id='con_rx'>" + String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)) + "</span> Bytes &nbsp; <b>Konsolen-TX:</b> <span id='con_tx'>" + String(uartMonitor.consoleTxBytes()) + "</span> Bytes</p><p><b>TX-Belegung:</b> <span id='con_tx_owner'>" + htmlEscape(uartMonitor.txOwnerText()) + "</span></p>";
   h += "<p class='small'>Aktuell: UART" + String(uartMonitor.uartNumber()) + ", RX GPIO" + String(uartMonitor.rxPin()) + ", TX GPIO" + String(uartMonitor.txPin()) + ", " + String(uartMonitor.baud()) + " " + htmlEscape(uartMonitor.frame()) + ".</p></fieldset>";
 
-  h += "<fieldset><legend>Terminal</legend><label>Anzeige</label><select id='display_mode'><option value='text' selected>Text</option><option value='hex'>HEX</option><option value='hexascii'>HEX + ASCII</option></select><pre class='terminal' id='terminal'>Verbinde mit UART-Puffer ...</pre>";
+  h += "<fieldset><legend>Terminal</legend><label>Anzeige</label><select id='display_mode'><option value='text' selected>Text</option><option value='hex'>HEX</option><option value='hexascii'>HEX + ASCII</option></select>";
+  h += "<div class='inlinecheck'><input id='autoscroll' type='checkbox' checked><label for='autoscroll' style='margin:0;font-weight:normal'>Autoscroll bei neuen UART-Daten</label></div>";
+  h += "<pre class='terminal' id='terminal'>Verbinde mit UART-Puffer ...</pre>";
   h += "<label>Eingabeformat</label><select id='input_mode'><option value='text' selected>Text / ASCII</option><option value='hex'>HEX-Bytes</option></select>";
   h += "<label>Eingabe</label><input id='console_input' autocomplete='off' autocapitalize='off' spellcheck='false' placeholder='Text oder z. B. 0D 0A FF'>";
   h += "<div class='inlinecheck'><input id='hide_input' type='checkbox'><label for='hide_input' style='margin:0;font-weight:normal'>Texteingabe verdecken (z. B. Passwort)</label></div>";
@@ -766,12 +768,13 @@ static String uartConsolePage() {
   h += "<p class='small'><b>Puffer:</b> 8192 RX-Bytes, inkrementelle Abfrage alle 150 ms. Bei sehr hohen kontinuierlichen Baudraten kann HTTP-Polling weiterhin Daten verlieren; der Decoder und Rohpuffer auf dem ESP32 arbeiten davon unabhaengig. BX3-Arbeitswert laut Leitfaden: 115200/8N1.</p>";
   h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
   h += R"rawliteral(<script>
-let consoleSeq=0,bytes=[],truncNote=false;const terminal=document.getElementById('terminal'),input=document.getElementById('console_input'),api=document.getElementById('console_api');
+let consoleSeq=0,bytes=[],truncNote=false;const terminal=document.getElementById('terminal'),input=document.getElementById('console_input'),api=document.getElementById('console_api'),autoscroll=document.getElementById('autoscroll');
+try{const saved=localStorage.getItem('uartConsoleAutoscroll');if(saved!==null)autoscroll.checked=saved==='1';}catch(e){}
 function endingHex(){const v=document.getElementById('line_ending').value;return v==='cr'?'0D':v==='lf'?'0A':v==='crlf'?'0D0A':'';}
 function ingestHex(h){for(let i=0;i+1<h.length;i+=2)bytes.push(parseInt(h.substr(i,2),16));if(bytes.length>32768)bytes=bytes.slice(-32768);}
 function textView(){let o=truncNote?'[... aeltere UART-Daten wurden im ESP32-Ringpuffer verworfen ...]\n':'';for(const b of bytes){if(b===10)o+='\n';else if(b===13)o+='\r';else if(b===9)o+='\t';else if(b>=32&&b<=126)o+=String.fromCharCode(b);else o+='.';}return o;}
 function hexView(withAscii){let o=truncNote?'[... Pufferueberlauf ...]\n':'';for(let i=0;i<bytes.length;i+=16){const row=bytes.slice(i,i+16);const hs=row.map(b=>b.toString(16).toUpperCase().padStart(2,'0')).join(' ');if(withAscii){const as=row.map(b=>b>=32&&b<=126?String.fromCharCode(b):'.').join('');o+=i.toString(16).toUpperCase().padStart(6,'0')+'  '+hs.padEnd(47,' ')+'  |'+as+'|\n';}else o+=hs+'\n';}return o;}
-function render(){const m=document.getElementById('display_mode').value;terminal.textContent=m==='text'?textView():hexView(m==='hexascii');terminal.scrollTop=terminal.scrollHeight;}
+function render(){const m=document.getElementById('display_mode').value;terminal.textContent=m==='text'?textView():hexView(m==='hexascii');if(autoscroll.checked)terminal.scrollTop=terminal.scrollHeight;}
 function setTxButtons(ok){for(const id of ['send_btn','enter_btn','ctrlc_btn','ctrld_btn','tab_btn','esc_btn'])document.getElementById(id).disabled=!ok;}
 async function pollConsole(){try{const r=await fetch('/uart/console/data?since='+consoleSeq,{cache:'no-store'});const d=await r.json();if(consoleSeq===0&&terminal.textContent.startsWith('Verbinde'))terminal.textContent='';if(d.truncated){bytes=[];truncNote=true;}ingestHex(d.hex||'');consoleSeq=Number(d.sequence)||0;document.getElementById('con_running').textContent=d.running?'laeuft':'gestoppt';document.getElementById('con_tx_enabled').textContent=d.tx_enabled?'ja':'nein';document.getElementById('con_rx').textContent=d.rx_bytes;document.getElementById('con_tx').textContent=d.tx_bytes;document.getElementById('con_tx_owner').textContent=d.tx_owner;setTxButtons(!!d.tx_ready);api.textContent=d.tx_ready?'Live - TX bereit':'Live - TX nicht bereit: '+d.tx_owner;render();}catch(e){api.textContent='FEHLER: '+e;}}
 async function sendForm(data,fmt){try{const r=await fetch('/uart/console/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:'format='+encodeURIComponent(fmt)+'&data='+encodeURIComponent(data)});if(!r.ok){api.textContent='SENDEN FEHLER: '+await r.text();return false;}api.textContent='gesendet';return true;}catch(e){api.textContent='SENDEN FEHLER: '+e;return false;}}
@@ -779,7 +782,7 @@ async function sendLine(){const m=document.getElementById('input_mode').value;if
 async function sendEnter(){const e=endingHex()||'0D';await sendForm(e,'hex');input.focus();}
 async function sendControl(code){try{const r=await fetch('/uart/console/control',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:'code='+code});if(!r.ok)api.textContent='CONTROL FEHLER: '+await r.text();else api.textContent='Steuerzeichen gesendet';}catch(e){api.textContent='CONTROL FEHLER: '+e;}input.focus();}
 async function clearConsole(){try{const r=await fetch('/uart/console/clear',{method:'POST'});const d=await r.json();bytes=[];truncNote=false;consoleSeq=Number(d.sequence)||0;render();api.textContent='Puffer geleert';}catch(e){api.textContent='LOESCHEN FEHLER: '+e;}}
-document.getElementById('display_mode').addEventListener('change',render);document.getElementById('input_mode').addEventListener('change',e=>{const hex=e.target.value==='hex';document.getElementById('hide_input').disabled=hex;if(hex){input.type='text';input.placeholder='z. B. 48 65 6C 6C 6F 0D';}else{input.placeholder='Text / Benutzername / Shell-Befehl';}});document.getElementById('hide_input').addEventListener('change',e=>{if(document.getElementById('input_mode').value==='text')input.type=e.target.checked?'password':'text';});input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendLine();}});setInterval(pollConsole,150);pollConsole();input.focus();
+document.getElementById('display_mode').addEventListener('change',render);autoscroll.addEventListener('change',()=>{try{localStorage.setItem('uartConsoleAutoscroll',autoscroll.checked?'1':'0');}catch(e){}if(autoscroll.checked)terminal.scrollTop=terminal.scrollHeight;});document.getElementById('input_mode').addEventListener('change',e=>{const hex=e.target.value==='hex';document.getElementById('hide_input').disabled=hex;if(hex){input.type='text';input.placeholder='z. B. 48 65 6C 6C 6F 0D';}else{input.placeholder='Text / Benutzername / Shell-Befehl';}});document.getElementById('hide_input').addEventListener('change',e=>{if(document.getElementById('input_mode').value==='text')input.type=e.target.checked?'password':'text';});input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendLine();}});setInterval(pollConsole,150);pollConsole();input.focus();
 </script>)rawliteral";
   h += "</div></body></html>";
   return h;

@@ -1,0 +1,20 @@
+BL_Add UART console autoscroll toggle
+Date: 2026-09-20
+
+Summary:
+- Added an Autoscroll checkbox to the universal UART console.
+- Enabled Autoscroll by default for first-time browser use.
+- Preserved the manual terminal scroll position while Autoscroll is disabled.
+- Stored the display preference in browser localStorage without changing ESP32 UART or NVS settings.
+- Kept the existing UART settings, decoder, probe runner, WLAN, MQTT, battery, deep sleep and OTA functionality unchanged.
+- Updated firmware version and project documentation to v0.16.
+
+Changed files:
+- src/main.cpp
+- src/ConfigDefaults.h
+- README.md
+- VALIDATION_v0.16.txt
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.16.md
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.16.docx
+- docs/2026-09-20 - Uart_Esp32 - Projektdokumentation - Firmware - v0.16.pdf
+- docs/2026-09-20 - Uart_Esp32 - Commit-Nachricht - UART-Konsole-Autoscroll - v0.16.txt
