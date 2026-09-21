@@ -1,0 +1,25 @@
+BL_Add verified UART image transfer and copyable console
+Date: 2026-09-21
+
+Summary:
+- Added a dedicated UART Image Transfer page for read-only BX3 MTD devices.
+- Added 32 KiB request/response blocks using dd, base64 and sha256sum with explicit BX3IMG markers.
+- Added per-block size/SHA-256 validation, timeout handling and up to five retries.
+- Added full-image SHA-256 comparison for transfers starting at block 0.
+- Added exclusive UART ownership while image transfer is active so console TX, probe runner and replay cannot interfere.
+- Added browser-side block assembly and binary block delivery through the web interface without storing the complete image in ESP32 RAM.
+- Added console display pause, text-selection protection and copy-selection/copy-all controls while keeping UART RX active.
+- Kept WLAN, NTP, MQTT, battery, deep-sleep, OTA, decoder and probe-runner functionality intact.
+- Updated firmware version to 0.17.0 / v0.17.
+
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- VALIDATION_v0.17.txt
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.17.md
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.17.docx
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.17.pdf
+- docs/2026-09-21 - Uart_Esp32 - Commit-Nachricht - UART-Image-Transfer-und-Konsole - v0.17.txt

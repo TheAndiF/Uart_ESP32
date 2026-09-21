@@ -2,7 +2,9 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.16
+## Stand v0.17
+
+**Neu v0.17:** Die UART-Konsole ist jetzt kopierfreundlich: `user-select:text`, Anzeige-Pause bei weiterlaufendem UART-Empfang, Schutz einer aktiven Textmarkierung vor Live-Neuzeichnen sowie Schaltflaechen fuer markierten Text und die gesamte Ansicht. Zusaetzlich gibt es das Hauptmenue **UART Image-Transfer**. Es liest ein read-only MTD-Device (z. B. `/dev/mtd7ro`) blockweise mit 32 KiB ueber die BX3-Shell (`dd`, `base64`, `sha256sum`), prueft Groesse und SHA-256 pro Block, wiederholt fehlerhafte Bloecke bis zu fuenfmal und vergleicht bei einem Volltransfer ab Block 0 den Gesamt-SHA256. Der Browser sammelt nur bereits validierte Bloecke und stellt am Ende die Image-Datei zum Download bereit; der ESP32 haelt nie das gesamte Image im RAM. Waehrend des Transfers ist UART TX/RX exklusiv fuer den Image-Parser reserviert.
 
 
 **Neu v0.16:** Die universelle **UART Konsole** besitzt jetzt ein Häkchenfeld **Autoscroll bei neuen UART-Daten**. Autoscroll ist beim ersten Aufruf standardmaessig aktiviert. Ist das Häkchen gesetzt, springt das Terminal nach jeder Aktualisierung automatisch ans Ende. Wird es deaktiviert, bleibt die aktuelle Scrollposition stehen, waehrend neue UART-Daten weiterhin empfangen und in den Browserpuffer uebernommen werden. Die Einstellung ist reine Browserdarstellung und wird per `localStorage` unter `uartConsoleAutoscroll` gespeichert; sie veraendert weder UART- noch NVS-Einstellungen auf dem ESP32. Beim erneuten Aktivieren wird sofort zum Ende des Terminals gescrollt.
@@ -17,7 +19,7 @@ Die UART Konsole wurde auf einen 8192-Byte-Ringpuffer erweitert und kann RX als 
 
 ### Historische Änderungshinweise
 
-Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.16-Architektur widersprechen, gilt die Beschreibung von v0.16 weiter oben.
+Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.17-Architektur widersprechen, gilt die Beschreibung von v0.17 weiter oben.
 
 **Neu v0.14:** Zusaetzlich zu Raw/Sniffer und Protokoll-Decoder gibt es den Modus **BX3 Konsole**. Er setzt die im beigefuegten BX3/ESP32-Leitfaden beschriebene bidirektionale UART-Verbindung fuer Boottext, Login und Shell-Eingaben um. Die Weboberflaeche `/uart/console` zeigt einen laufenden Terminalpuffer, kann Text mit bewusst waehlbarem Zeilenabschluss (CR, LF, CRLF oder keiner) senden und stellt Enter, Ctrl+C, Ctrl+D und TAB als eigene Aktionen bereit. Eine Passwort-Eingabe kann im Browser verdeckt werden; eingegebene Zeichen werden nicht persistent gespeichert. Der Modus verwendet die normalen UART-Einstellungen und ist damit auf 115200/8N1 einstellbar, wie es der Leitfaden als Arbeitswert fuer die BX3-Konsole nennt. RX-Daten werden ausserdem auf den lokalen seriellen USB/UART0-Monitor gespiegelt; dort koennen Firmware-Diagnosemeldungen dazwischen erscheinen. Bytes, die lokal ueber USB/UART0 eingegeben werden, werden im Konsolenmodus unveraendert zum Ziel-UART weitergereicht.
 

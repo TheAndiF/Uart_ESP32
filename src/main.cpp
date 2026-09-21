@@ -13,7 +13,7 @@
 #include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
-static const char* FW_BUILD_VERSION = "v0.16";
+static const char* FW_BUILD_VERSION = "v0.17";
 static const char* TZ_CET_CEST = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 AsyncWebServer server(80);
@@ -112,7 +112,7 @@ static float espTemperature() {
 
 static String pageHead(const String& title) {
   String h = F("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>");
-  h += "<title>" + htmlEscape(title) + "</title><style>body{font-family:Arial;margin:0;padding:18px;background:#f4f4f4;color:#111}.box{max-width:760px;margin:auto;background:#fff;padding:20px;border-radius:10px;box-shadow:0 1px 5px #bbb}h1{text-align:center}fieldset{margin:14px 0;padding:12px;border:1px solid #ccc;border-radius:7px}label{display:block;font-weight:600;margin-top:9px}input,select{width:100%;box-sizing:border-box;padding:9px;margin-top:4px;font-size:16px}.btn,button,input[type=submit]{display:block;width:100%;box-sizing:border-box;padding:11px;margin:10px 0;text-align:center;border:1px solid #aaa;border-radius:5px;background:#eee;color:#000;text-decoration:none;font-size:16px}.mono{font-family:monospace;word-break:break-all}.raw{font-family:monospace;white-space:pre-wrap;background:#111;color:#eee;padding:10px;border-radius:5px;min-height:90px;overflow:auto}.terminal{font-family:monospace;white-space:pre-wrap;background:#0a0a0a;color:#e8e8e8;padding:12px;border-radius:5px;min-height:320px;max-height:60vh;overflow:auto;word-break:break-word}.tbl{width:100%;border-collapse:collapse}.tbl th,.tbl td{border:1px solid #ccc;padding:7px;text-align:left}.tbl th{background:#eee}.ok{color:#087a1c}.bad{color:#a00000}.warn{background:#fff3cd;border:1px solid #e4c96a;padding:10px;border-radius:5px}.small{font-size:13px;color:#666}.inlinecheck{display:flex;gap:8px;align-items:center;margin-top:8px}.inlinecheck input{width:auto;margin:0}</style></head><body><div class='box'>";
+  h += "<title>" + htmlEscape(title) + "</title><style>body{font-family:Arial;margin:0;padding:18px;background:#f4f4f4;color:#111}.box{max-width:760px;margin:auto;background:#fff;padding:20px;border-radius:10px;box-shadow:0 1px 5px #bbb}h1{text-align:center}fieldset{margin:14px 0;padding:12px;border:1px solid #ccc;border-radius:7px}label{display:block;font-weight:600;margin-top:9px}input,select{width:100%;box-sizing:border-box;padding:9px;margin-top:4px;font-size:16px}.btn,button,input[type=submit]{display:block;width:100%;box-sizing:border-box;padding:11px;margin:10px 0;text-align:center;border:1px solid #aaa;border-radius:5px;background:#eee;color:#000;text-decoration:none;font-size:16px}.mono{font-family:monospace;word-break:break-all}.raw{font-family:monospace;white-space:pre-wrap;background:#111;color:#eee;padding:10px;border-radius:5px;min-height:90px;overflow:auto}.terminal{font-family:monospace;white-space:pre-wrap;background:#0a0a0a;color:#e8e8e8;padding:12px;border-radius:5px;min-height:320px;max-height:60vh;overflow:auto;word-break:break-word;user-select:text;-webkit-user-select:text}.tbl{width:100%;border-collapse:collapse}.tbl th,.tbl td{border:1px solid #ccc;padding:7px;text-align:left}.tbl th{background:#eee}.ok{color:#087a1c}.bad{color:#a00000}.warn{background:#fff3cd;border:1px solid #e4c96a;padding:10px;border-radius:5px}.small{font-size:13px;color:#666}.inlinecheck{display:flex;gap:8px;align-items:center;margin-top:8px}.inlinecheck input{width:auto;margin:0}</style></head><body><div class='box'>";
   return h;
 }
 
@@ -122,6 +122,7 @@ static String uartNav() {
   h += "<a class='btn' href='/uart/console'>UART Konsole</a>";
   h += "<a class='btn' href='/uart/decoder'>UART Decoder</a>";
   h += "<a class='btn' href='/uart/probe'>UART Probe-Runner</a>";
+  h += "<a class='btn' href='/uart/image'>UART Image-Transfer</a>";
   return h;
 }
 
@@ -757,7 +758,9 @@ static String uartConsolePage() {
 
   h += "<fieldset><legend>Terminal</legend><label>Anzeige</label><select id='display_mode'><option value='text' selected>Text</option><option value='hex'>HEX</option><option value='hexascii'>HEX + ASCII</option></select>";
   h += "<div class='inlinecheck'><input id='autoscroll' type='checkbox' checked><label for='autoscroll' style='margin:0;font-weight:normal'>Autoscroll bei neuen UART-Daten</label></div>";
+  h += "<div class='inlinecheck'><input id='pause_display' type='checkbox'><label for='pause_display' style='margin:0;font-weight:normal'>Anzeige pausieren (UART-Empfang laeuft weiter)</label></div>";
   h += "<pre class='terminal' id='terminal'>Verbinde mit UART-Puffer ...</pre>";
+  h += "<button type='button' onclick='copySelection()'>Markierten Text kopieren</button><button type='button' onclick='copyAll()'>Gesamte Ansicht kopieren</button>";
   h += "<label>Eingabeformat</label><select id='input_mode'><option value='text' selected>Text / ASCII</option><option value='hex'>HEX-Bytes</option></select>";
   h += "<label>Eingabe</label><input id='console_input' autocomplete='off' autocapitalize='off' spellcheck='false' placeholder='Text oder z. B. 0D 0A FF'>";
   h += "<div class='inlinecheck'><input id='hide_input' type='checkbox'><label for='hide_input' style='margin:0;font-weight:normal'>Texteingabe verdecken (z. B. Passwort)</label></div>";
@@ -768,21 +771,47 @@ static String uartConsolePage() {
   h += "<p class='small'><b>Puffer:</b> 8192 RX-Bytes, inkrementelle Abfrage alle 150 ms. Bei sehr hohen kontinuierlichen Baudraten kann HTTP-Polling weiterhin Daten verlieren; der Decoder und Rohpuffer auf dem ESP32 arbeiten davon unabhaengig. BX3-Arbeitswert laut Leitfaden: 115200/8N1.</p>";
   h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
   h += R"rawliteral(<script>
-let consoleSeq=0,bytes=[],truncNote=false;const terminal=document.getElementById('terminal'),input=document.getElementById('console_input'),api=document.getElementById('console_api'),autoscroll=document.getElementById('autoscroll');
-try{const saved=localStorage.getItem('uartConsoleAutoscroll');if(saved!==null)autoscroll.checked=saved==='1';}catch(e){}
+let consoleSeq=0,bytes=[],truncNote=false;const terminal=document.getElementById('terminal'),input=document.getElementById('console_input'),api=document.getElementById('console_api'),autoscroll=document.getElementById('autoscroll'),pauseDisplay=document.getElementById('pause_display');
+try{const saved=localStorage.getItem('uartConsoleAutoscroll');if(saved!==null)autoscroll.checked=saved==='1';const ps=localStorage.getItem('uartConsolePause');if(ps!==null)pauseDisplay.checked=ps==='1';}catch(e){}
 function endingHex(){const v=document.getElementById('line_ending').value;return v==='cr'?'0D':v==='lf'?'0A':v==='crlf'?'0D0A':'';}
 function ingestHex(h){for(let i=0;i+1<h.length;i+=2)bytes.push(parseInt(h.substr(i,2),16));if(bytes.length>32768)bytes=bytes.slice(-32768);}
 function textView(){let o=truncNote?'[... aeltere UART-Daten wurden im ESP32-Ringpuffer verworfen ...]\n':'';for(const b of bytes){if(b===10)o+='\n';else if(b===13)o+='\r';else if(b===9)o+='\t';else if(b>=32&&b<=126)o+=String.fromCharCode(b);else o+='.';}return o;}
 function hexView(withAscii){let o=truncNote?'[... Pufferueberlauf ...]\n':'';for(let i=0;i<bytes.length;i+=16){const row=bytes.slice(i,i+16);const hs=row.map(b=>b.toString(16).toUpperCase().padStart(2,'0')).join(' ');if(withAscii){const as=row.map(b=>b>=32&&b<=126?String.fromCharCode(b):'.').join('');o+=i.toString(16).toUpperCase().padStart(6,'0')+'  '+hs.padEnd(47,' ')+'  |'+as+'|\n';}else o+=hs+'\n';}return o;}
-function render(){const m=document.getElementById('display_mode').value;terminal.textContent=m==='text'?textView():hexView(m==='hexascii');if(autoscroll.checked)terminal.scrollTop=terminal.scrollHeight;}
+function terminalSelection(){const sel=window.getSelection?window.getSelection():null;if(!sel||sel.isCollapsed||!sel.rangeCount)return false;const r=sel.getRangeAt(0);return terminal.contains(r.commonAncestorContainer)||r.commonAncestorContainer===terminal;}
+function render(force=false){if(!force&&(pauseDisplay.checked||terminalSelection()))return;const m=document.getElementById('display_mode').value;terminal.textContent=m==='text'?textView():hexView(m==='hexascii');if(autoscroll.checked)terminal.scrollTop=terminal.scrollHeight;}
+async function copyText(t){if(!t){api.textContent='Nichts zum Kopieren markiert.';return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(t);}else{const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();}api.textContent='In Zwischenablage kopiert.';}catch(e){api.textContent='Kopieren nicht moeglich - Strg+C verwenden.';}}
+function copySelection(){const sel=window.getSelection?window.getSelection():null;copyText(sel?sel.toString():'');}
+function copyAll(){copyText(terminal.textContent||'');}
 function setTxButtons(ok){for(const id of ['send_btn','enter_btn','ctrlc_btn','ctrld_btn','tab_btn','esc_btn'])document.getElementById(id).disabled=!ok;}
 async function pollConsole(){try{const r=await fetch('/uart/console/data?since='+consoleSeq,{cache:'no-store'});const d=await r.json();if(consoleSeq===0&&terminal.textContent.startsWith('Verbinde'))terminal.textContent='';if(d.truncated){bytes=[];truncNote=true;}ingestHex(d.hex||'');consoleSeq=Number(d.sequence)||0;document.getElementById('con_running').textContent=d.running?'laeuft':'gestoppt';document.getElementById('con_tx_enabled').textContent=d.tx_enabled?'ja':'nein';document.getElementById('con_rx').textContent=d.rx_bytes;document.getElementById('con_tx').textContent=d.tx_bytes;document.getElementById('con_tx_owner').textContent=d.tx_owner;setTxButtons(!!d.tx_ready);api.textContent=d.tx_ready?'Live - TX bereit':'Live - TX nicht bereit: '+d.tx_owner;render();}catch(e){api.textContent='FEHLER: '+e;}}
 async function sendForm(data,fmt){try{const r=await fetch('/uart/console/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:'format='+encodeURIComponent(fmt)+'&data='+encodeURIComponent(data)});if(!r.ok){api.textContent='SENDEN FEHLER: '+await r.text();return false;}api.textContent='gesendet';return true;}catch(e){api.textContent='SENDEN FEHLER: '+e;return false;}}
 async function sendLine(){const m=document.getElementById('input_mode').value;if(m==='hex'){const d=input.value+(input.value&&endingHex()?' ':'')+endingHex();if(await sendForm(d,'hex'))input.value='';}else{const e=endingHex(),suffix=e==='0D'?'\r':e==='0A'?'\n':e==='0D0A'?'\r\n':'';if(await sendForm(input.value+suffix,'text'))input.value='';}input.focus();}
 async function sendEnter(){const e=endingHex()||'0D';await sendForm(e,'hex');input.focus();}
 async function sendControl(code){try{const r=await fetch('/uart/console/control',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:'code='+code});if(!r.ok)api.textContent='CONTROL FEHLER: '+await r.text();else api.textContent='Steuerzeichen gesendet';}catch(e){api.textContent='CONTROL FEHLER: '+e;}input.focus();}
-async function clearConsole(){try{const r=await fetch('/uart/console/clear',{method:'POST'});const d=await r.json();bytes=[];truncNote=false;consoleSeq=Number(d.sequence)||0;render();api.textContent='Puffer geleert';}catch(e){api.textContent='LOESCHEN FEHLER: '+e;}}
-document.getElementById('display_mode').addEventListener('change',render);autoscroll.addEventListener('change',()=>{try{localStorage.setItem('uartConsoleAutoscroll',autoscroll.checked?'1':'0');}catch(e){}if(autoscroll.checked)terminal.scrollTop=terminal.scrollHeight;});document.getElementById('input_mode').addEventListener('change',e=>{const hex=e.target.value==='hex';document.getElementById('hide_input').disabled=hex;if(hex){input.type='text';input.placeholder='z. B. 48 65 6C 6C 6F 0D';}else{input.placeholder='Text / Benutzername / Shell-Befehl';}});document.getElementById('hide_input').addEventListener('change',e=>{if(document.getElementById('input_mode').value==='text')input.type=e.target.checked?'password':'text';});input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendLine();}});setInterval(pollConsole,150);pollConsole();input.focus();
+async function clearConsole(){try{const r=await fetch('/uart/console/clear',{method:'POST'});const d=await r.json();bytes=[];truncNote=false;consoleSeq=Number(d.sequence)||0;render(true);api.textContent='Puffer geleert';}catch(e){api.textContent='LOESCHEN FEHLER: '+e;}}
+document.getElementById('display_mode').addEventListener('change',()=>render(true));autoscroll.addEventListener('change',()=>{try{localStorage.setItem('uartConsoleAutoscroll',autoscroll.checked?'1':'0');}catch(e){}if(autoscroll.checked&&!pauseDisplay.checked)terminal.scrollTop=terminal.scrollHeight;});pauseDisplay.addEventListener('change',()=>{try{localStorage.setItem('uartConsolePause',pauseDisplay.checked?'1':'0');}catch(e){}if(!pauseDisplay.checked)render(true);});document.getElementById('input_mode').addEventListener('change',e=>{const hex=e.target.value==='hex';document.getElementById('hide_input').disabled=hex;if(hex){input.type='text';input.placeholder='z. B. 48 65 6C 6C 6F 0D';}else{input.placeholder='Text / Benutzername / Shell-Befehl';}});document.getElementById('hide_input').addEventListener('change',e=>{if(document.getElementById('input_mode').value==='text')input.type=e.target.checked?'password':'text';});input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendLine();}});setInterval(pollConsole,150);pollConsole();input.focus();
+</script>)rawliteral";
+  h += "</div></body></html>";
+  return h;
+}
+
+static String uartImageTransferPage() {
+  String h = pageHead("UART Image-Transfer");
+  h += "<h1>UART Image-Transfer</h1>";
+  h += "<p class='small'>Verifiziertes, blockweises Backup eines BX3-MTD-Devices ueber die serielle Shell. Version 1 nutzt dd + base64 + sha256sum, 32-KiB-Bloecke, eindeutige Marker und maximal 5 Wiederholungen pro Block.</p>";
+  h += "<div class='warn'><b>Wichtig:</b> Nur auf eigenen bzw. autorisierten Systemen verwenden. Waehren des Transfers reserviert diese Funktion UART TX/RX; Konsole, Probe-Runner und Decoder-Senden sind gesperrt.</div>";
+  h += "<fieldset><legend>Quelle</legend><label>Read-only MTD-Device</label><input id='img_source' value='/dev/mtd7ro' maxlength='16'><label>Startblock</label><input id='img_start' type='number' min='0' value='0'><p class='small'>Startblock 0 erzeugt ein vollstaendiges Image und erlaubt die Gesamt-SHA256-Pruefung. Ein hoeherer Startblock liefert nur den Rest ab diesem Block und ist fuer manuelle Fortsetzung gedacht.</p><button id='img_start_btn' type='button' onclick='startImage()'>Image-Transfer starten</button><button id='img_abort_btn' type='button' onclick='abortImage()'>Abbrechen</button></fieldset>";
+  h += "<fieldset><legend>Status</legend><p><b>Status:</b> <span id='img_status'>bereit</span></p><p><b>Quelle:</b> <span id='img_src'>-</span></p><p><b>Block:</b> <span id='img_block'>-</span> &nbsp; <b>Blockgroesse:</b> 32768 Byte</p><p><b>Empfangen:</b> <span id='img_bytes'>0</span> Byte &nbsp; <b>Fehler:</b> <span id='img_errors'>0</span> &nbsp; <b>Wiederholungen:</b> <span id='img_retries'>0</span></p><p><b>Geschwindigkeit:</b> <span id='img_rate'>0</span> KiB/s</p><p><b>BX3 SHA256:</b> <span class='mono' id='img_remote_sha'>-</span></p><p><b>ESP32 SHA256:</b> <span class='mono' id='img_local_sha'>-</span></p><progress id='img_progress' value='0' max='100' style='width:100%;height:24px'></progress><p id='img_note' class='small'>Der Browser haelt validierte Bloecke bis zum fertigen Download im RAM.</p><a class='btn' id='img_download' style='display:none' download='bx3-mtd7.img'>Image herunterladen</a></fieldset>";
+  h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
+  h += R"rawliteral(<script>
+let chunks=[],busy=false,lastBlock=-1,downloadUrl=null,startedAtBlock=0;
+async function post(url,body=''){return fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body});}
+async function startImage(){chunks=[];lastBlock=-1;if(downloadUrl){URL.revokeObjectURL(downloadUrl);downloadUrl=null;}document.getElementById('img_download').style.display='none';startedAtBlock=Number(document.getElementById('img_start').value)||0;const src=document.getElementById('img_source').value;const r=await post('/uart/image/start','source='+encodeURIComponent(src)+'&start='+startedAtBlock);if(!r.ok){document.getElementById('img_status').textContent=await r.text();return;}pollImage();}
+async function abortImage(){await post('/uart/image/abort');}
+async function fetchReadyBlock(d){if(busy||!d.block_ready)return;busy=true;try{const r=await fetch('/uart/image/block',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());const aBuf=new Uint8Array(await r.arrayBuffer());if(aBuf.length===0)throw new Error('Leerer Block');chunks.push(aBuf);lastBlock=Number(d.current_block);const a=await post('/uart/image/ack','block='+lastBlock);if(!a.ok)throw new Error(await a.text());}catch(e){document.getElementById('img_note').textContent='Browserfehler: '+e;}finally{busy=false;}}
+function makeDownload(d){if(downloadUrl||!d.done)return;const blob=new Blob(chunks,{type:'application/octet-stream'});downloadUrl=URL.createObjectURL(blob);const a=document.getElementById('img_download');a.href=downloadUrl;const m=(d.source||'/dev/mtd7ro').match(/mtd(\d+)ro/);const n=m?m[1]:'x';a.download=startedAtBlock===0?'bx3-mtd'+n+'.img':'bx3-mtd'+n+'-from-block-'+startedAtBlock+'.img';a.style.display='block';document.getElementById('img_note').textContent=startedAtBlock===0?'Transfer beendet. Datei im Browser ist bereit.':'Teilimage ab Startblock ist bereit; fuer ein Vollimage muss es extern korrekt zusammengesetzt werden.';}
+async function pollImage(){try{const r=await fetch('/uart/image/status',{cache:'no-store'}),d=await r.json();document.getElementById('img_status').textContent=d.status;document.getElementById('img_src').textContent=d.source||'-';document.getElementById('img_block').textContent=d.total_blocks?d.current_block+' / '+d.total_blocks:'-';document.getElementById('img_bytes').textContent=d.accepted_bytes;document.getElementById('img_errors').textContent=d.errors;document.getElementById('img_retries').textContent=d.retries;document.getElementById('img_rate').textContent=(Number(d.rate_bps)/1024).toFixed(2);document.getElementById('img_remote_sha').textContent=d.remote_sha256||'-';document.getElementById('img_local_sha').textContent=d.local_sha256||'-';const pct=d.total_size?Math.min(100,Number(d.accepted_bytes)*100/Number(d.total_size)):0;document.getElementById('img_progress').value=pct;document.getElementById('img_start_btn').disabled=d.active;document.getElementById('img_abort_btn').disabled=!d.active;if(d.block_ready)await fetchReadyBlock(d);if(d.done)makeDownload(d);}catch(e){document.getElementById('img_status').textContent='FEHLER: '+e;}}
+setInterval(pollImage,400);pollImage();
 </script>)rawliteral";
   h += "</div></body></html>";
   return h;
@@ -982,6 +1011,36 @@ static void registerRoutes() {
     r->send(resp);
   });
 
+  // Image-transfer routes. The browser fetches one validated 32 KiB block at a
+  // time; the ESP32 never stores the complete image in RAM.
+  server.on("/uart/image/status", HTTP_GET, [](AsyncWebServerRequest* r){
+    AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.imageStatusJson());
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
+  });
+  server.on("/uart/image/block", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (!uartMonitor.imageBlockReady()) { r->send(409, "text/plain; charset=utf-8", "Block nicht bereit"); return; }
+    AsyncWebServerResponse* resp = r->beginChunkedResponse("application/octet-stream", [](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+      return uartMonitor.imageReadBlock(index, buffer, maxLen);
+    });
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
+  });
+  server.on("/uart/image/start", HTTP_POST, [](AsyncWebServerRequest* r){
+    const String source = r->hasArg("source") ? r->arg("source") : String("/dev/mtd7ro");
+    const uint32_t startBlock = r->hasArg("start") ? (uint32_t)strtoul(r->arg("start").c_str(), nullptr, 10) : 0U;
+    if (!uartMonitor.startImageTransfer(source, startBlock)) { r->send(409, "text/plain; charset=utf-8", uartMonitor.imageStatusJson()); return; }
+    r->send(200, "application/json; charset=utf-8", uartMonitor.imageStatusJson());
+  });
+  server.on("/uart/image/ack", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (!uartMonitor.imageBlockReady()) { r->send(409, "text/plain; charset=utf-8", "Kein validierter Block wartet auf ACK."); return; }
+    if (!uartMonitor.imageAcknowledgeBlock()) { r->send(500, "text/plain; charset=utf-8", "ACK/naechster Block fehlgeschlagen."); return; }
+    r->send(200, "text/plain; charset=utf-8", "OK");
+  });
+  server.on("/uart/image/abort", HTTP_POST, [](AsyncWebServerRequest* r){ uartMonitor.abortImageTransfer("vom Benutzer abgebrochen"); r->send(200, "text/plain; charset=utf-8", "OK"); });
+  server.on("/uart/image", HTTP_GET, [](AsyncWebServerRequest* r){
+    AsyncWebServerResponse* resp = r->beginResponse(200, "text/html; charset=utf-8", uartImageTransferPage());
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
+  });
+
   // Probe actions must be registered before the /uart/probe page itself.
   server.on("/uart/probe/start_hit", HTTP_POST, [](AsyncWebServerRequest* r){
     if (!uartMonitor.startProbeSweep(true)) {
@@ -1006,7 +1065,7 @@ static void registerRoutes() {
 
   server.on("/uart/start", HTTP_POST, [](AsyncWebServerRequest* r){
     const String ret = r->hasArg("return") ? r->arg("return") : String("settings");
-    const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "probe" ? "/uart/probe" : "/uart/settings";
+    const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "probe" ? "/uart/probe" : ret == "image" ? "/uart/image" : "/uart/settings";
     if (!uartMonitor.start()) {
       r->send(400, "text/html; charset=utf-8", pageHead("UART Startfehler") + "<h1>UART konnte nicht gestartet werden</h1><p>" + htmlEscape(uartMonitor.status()) + "</p><a class='btn' href='/uart/settings'>UART Einstellungen</a></div></body></html>");
       return;
@@ -1015,7 +1074,7 @@ static void registerRoutes() {
   });
   server.on("/uart/stop", HTTP_POST, [](AsyncWebServerRequest* r){
     const String ret = r->hasArg("return") ? r->arg("return") : String("settings");
-    const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "probe" ? "/uart/probe" : "/uart/settings";
+    const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "probe" ? "/uart/probe" : ret == "image" ? "/uart/image" : "/uart/settings";
     uartMonitor.stop();
     r->redirect(target);
   });

@@ -1,0 +1,32 @@
+Uart_Esp32 v0.17 - validation record
+Date: 2026-09-21
+Status: PARTIAL / hardware validation pending
+
+PASS - Source tree based on uploaded Uart_ESP32 v0.16 package.
+PASS - Firmware version updated to v0.17 / 0.17.0.
+PASS - UartManager.cpp + TestCandidateCatalog.cpp pass local g++ -std=c++17 -fsyntax-only with Arduino/ESP32 host stubs.
+PASS - main.cpp passes local g++ -std=c++17 -fsyntax-only with ESPAsyncWebServer host stubs including beginChunkedResponse signature.
+PASS - Embedded JavaScript blocks extracted from main.cpp pass node --check.
+PASS - UART navigation contains Settings, Console, Decoder, Probe-Runner and Image-Transfer.
+PASS - Console includes autoscroll, display pause, selection-preserving render behavior, copy selection and copy all.
+PASS - Image source is restricted to /dev/mtdNro (N 0..31).
+PASS - Image block size is 32768 bytes and retry limit is 5.
+PASS - Explicit BX3IMG shell-sync/MTD and BEGIN/SIZE/SHA256/END markers are parsed.
+PASS - Each decoded block is checked for exact length and SHA-256 before becoming browser-readable.
+PASS - Full transfer starting at block 0 computes local aggregate SHA-256 and compares it with BX3 sha256sum.
+PASS - Image transfer blocks console TX, field-5 replay and probe-runner TX ownership.
+PASS - UART stop aborts an active image transfer before closing HardwareSerial.
+PASS - Browser receives only the current validated block; complete image is assembled in browser memory, not ESP32 RAM.
+PASS - Existing WLAN/NTP/MQTT/Battery/DeepSleep/OTA source files were not functionally changed.
+
+NOT RUN - Real PlatformIO build (PlatformIO executable not available in this environment).
+NOT RUN - ESP32-WROOM-32 / NodeMCU-32S flash test.
+NOT RUN - BX3 serial shell / /dev/mtd7ro hardware test.
+NOT RUN - 16 MiB end-to-end transfer and WLAN interruption test.
+
+Required before deployment:
+1. pio run -e uart_esp32_usb
+2. Flash test on the target ESP32.
+3. Verify UART RX and TX electrical levels on the BX3.
+4. Verify /proc/mtd and /dev/mtd7ro on the authorized BX3.
+5. Perform an end-to-end backup and compare an independent PC SHA-256.
