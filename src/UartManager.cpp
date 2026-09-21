@@ -104,6 +104,10 @@ bool UartManager::start() {
               (_txPin >= 0 ? String("TX freigegeben - warte auf gueltiges 0x0021-Paket") : String("TX freigegeben, aber kein TX GPIO konfiguriert"));
 
   _serial = (_uartNumber == 1) ? &_uart1 : &_uart2;
+  // v0.19: enlarge the hardware RX ring before begin(). This gives the web
+  // server and image parser substantially more time to drain bursty UART data
+  // without dropping bytes.
+  _serial->setRxBufferSize(UART_RX_BUFFER_SIZE);
   // Important safety property: when TX is locked, HardwareSerial is started
   // with TX=-1 so the configured GPIO is not driven by the UART peripheral.
   const int activeTxPin = _txEnabled ? _txPin : -1;
@@ -145,8 +149,10 @@ bool UartManager::restart() {
 
 void UartManager::loop() {
   if (!_running || !_serial) return;
-  int budget = 512;
-  while (_serial->available() > 0 && budget-- > 0) {
+  // Image transfers are RX-heavy. Drain a much larger burst per loop while the
+  // transfer owns UART; normal console/decoder operation keeps the old budget.
+  size_t budget = imageActive() ? IMAGE_RX_DRAIN_BUDGET : 512U;
+  while (_serial->available() > 0 && budget-- > 0U) {
     const int value = _serial->read();
     if (value < 0) break;
     const uint8_t b = (uint8_t)value;
@@ -999,7 +1005,7 @@ String UartManager::statusJson() const {
 
 
 // -----------------------------------------------------------------------------
-// UART image transfer (v0.17)
+// UART image transfer (v0.18)
 // -----------------------------------------------------------------------------
 namespace {
 static void shaHex(const unsigned char hash[32], char out[65]) {
@@ -1019,6 +1025,26 @@ static bool isHex64(const String& s) {
   }
   return true;
 }
+}
+
+uint32_t UartManager::posixCksum(const uint8_t* data, size_t length) {
+  // POSIX cksum CRC-32: polynomial 0x04C11DB7, zero initial value, length bytes
+  // folded into the CRC and final one's complement. This matches the BX3
+  // `cksum` utility and avoids SHA-256 work for every 32-KiB block.
+  uint32_t crc = 0U;
+  auto feed = [&crc](uint8_t byte) {
+    crc ^= (uint32_t)byte << 24;
+    for (uint8_t bit = 0; bit < 8U; ++bit) {
+      crc = (crc & 0x80000000UL) ? ((crc << 1) ^ 0x04C11DB7UL) : (crc << 1);
+    }
+  };
+  for (size_t i = 0; i < length; ++i) feed(data[i]);
+  size_t n = length;
+  while (n != 0U) {
+    feed((uint8_t)(n & 0xFFU));
+    n >>= 8U;
+  }
+  return ~crc;
 }
 
 bool UartManager::validateImageSource(const String& source, uint8_t& mtdNo) const {
@@ -1045,6 +1071,10 @@ bool UartManager::imageBlockReady() const {
 bool UartManager::startImageTransfer(const String& source, uint32_t startBlock) {
   uint8_t mtdNo = 0;
   if (imageActive()) { _imageStatus = "Transfer laeuft bereits"; return false; }
+  if (_imageRestartRequired && !_imageConsoleConfirmed) {
+    _imageStatus = "Neustart gesperrt: zuerst UART Konsole oeffnen, Shell-Zugriff herstellen und dort bestaetigen";
+    return false;
+  }
   if (!validateImageSource(source, mtdNo)) { _imageStatus = "Quelle ungueltig; erlaubt ist /dev/mtdNro"; return false; }
   if (!_running || !_serial) { _imageStatus = "UART ist gestoppt"; return false; }
   if (!_txEnabled || _txPin < 0 || !validTxPin(_txPin)) { _imageStatus = "TX ist nicht freigegeben"; return false; }
@@ -1053,21 +1083,35 @@ bool UartManager::startImageTransfer(const String& source, uint32_t startBlock) 
   _imageSource = source;
   _imageStartBlock = startBlock;
   _imageCurrentBlock = startBlock;
+  _imageReadyBlock = 0xFFFFFFFFUL;
+  _imageLastAckedBlock = 0xFFFFFFFFUL;
   _imageTotalSize = 0;
   _imageTotalBlocks = 0;
   _imageExpectedSize = 0;
   _imageBlockLength = 0;
-  _imageExpectedSha[0] = _imageBlockSha[0] = _imageLocalTotalSha[0] = _imageRemoteTotalSha[0] = '\0';
+  _imageExpectedCrc = 0;
+  _imageBlockCrc = 0;
+  _imageLocalTotalSha[0] = _imageRemoteTotalSha[0] = '\0';
   _imageRetries = 0;
   _imageRetryTotal = 0;
   _imageErrors = 0;
+  _imageTimeoutErrors = 0;
+  _imageCrcErrors = 0;
+  _imageShaErrors = 0;
+  _imageBase64Errors = 0;
+  _imageMarkerErrors = 0;
+  _imageSizeErrors = 0;
+  _imageOtherErrors = 0;
   _imageAcceptedBytes = 0;
   _imageLine = "";
+  _imageLine.reserve(160);
   _imageStartedMillis = millis();
   _imageLastRxMillis = millis();
   _imageOverallVerify = (startBlock == 0U);
   _imageMtdMarkerSeen = false;
   _imageShaStarted = false;
+  _imageRestartRequired = false;
+  _imageConsoleConfirmed = false;
   clearConsole();
   clearRaw();
   resetParser();
@@ -1101,9 +1145,47 @@ void UartManager::abortImageTransfer(const String& reason) {
     _imageShaStarted = false;
   }
   _imageState = ImageState::Error;
-  _imageStatus = reason;
+  _imageStatus = reason + "; UART Konsole ist wieder freigegeben. Vor einem Neustart Shell-Zugriff wiederherstellen und in der Konsole bestaetigen.";
   _imageLine = "";
+  _imageReadyBlock = 0xFFFFFFFFUL;
+  _imageRestartRequired = true;
+  _imageConsoleConfirmed = false;
   Serial.printf("[IMAGE] Abbruch: %s\n", reason.c_str());
+}
+
+bool UartManager::confirmImageConsoleAccess() {
+  if (imageActive()) return false;
+  if (!_imageRestartRequired) return true;
+  if (!_running || !_serial || !_txEnabled || _txPin < 0 || !validTxPin(_txPin)) return false;
+  _imageConsoleConfirmed = true;
+  _imageStatus = "Konsolenzugriff bestaetigt - Image-Transfer kann neu gestartet werden";
+  return true;
+}
+
+bool UartManager::setupImageShellHelper() {
+  if (!_serial || !_running) return false;
+  // Define the block helper once in the interactive BX3 shell. Per block the
+  // ESP32 then sends only "bx3img_block N" instead of a long command chain.
+  // POSIX cksum returns both CRC32 and byte count, replacing wc + sha256sum.
+  String cmd;
+  cmd.reserve(900);
+  cmd += "if command -v cksum >/dev/null 2>&1; then ";
+  cmd += "bx3img_block(){ N=\"$1\"; ";
+  cmd += "dd if=" + _imageSource + " of=/tmp/bx3blk bs=" + String(IMAGE_BLOCK_SIZE) + " skip=\"$N\" count=1 2>/dev/null; ";
+  cmd += "set -- $(cksum /tmp/bx3blk); C=\"$1\"; S=\"$2\"; ";
+  cmd += "printf '\\n<<<BX3IMG:BEGIN:%06d>>>\\n' \"$N\"; ";
+  cmd += "printf '<<<BX3IMG:SIZE:%s>>>\\n' \"$S\"; ";
+  cmd += "printf '<<<BX3IMG:CRC32:%s>>>\\n' \"$C\"; ";
+  cmd += "base64 /tmp/bx3blk; ";
+  cmd += "printf '<<<BX3IMG:END:%06d>>>\\n' \"$N\"; rm -f /tmp/bx3blk; }; ";
+  cmd += "printf '\\n<<<BX3IMG:SETUP:OK>>>\\n'; ";
+  cmd += "else printf '\\n<<<BX3IMG:SETUP:CKSUM_MISSING>>>\\n'; fi\r";
+  const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+  if (written != cmd.length()) return false;
+  _imageState = ImageState::WaitSetup;
+  _imageStatus = "initialisiere schnellen BX3-Blockhelfer (cksum/CRC32)";
+  _imageLastRxMillis = millis();
+  return true;
 }
 
 bool UartManager::requestImageBlock() {
@@ -1111,24 +1193,18 @@ bool UartManager::requestImageBlock() {
   const uint32_t remaining = _imageTotalSize - _imageCurrentBlock * (uint32_t)IMAGE_BLOCK_SIZE;
   _imageExpectedSize = remaining < IMAGE_BLOCK_SIZE ? remaining : (uint32_t)IMAGE_BLOCK_SIZE;
   _imageBlockLength = 0;
-  _imageExpectedSha[0] = '\0';
-  _imageBlockSha[0] = '\0';
+  _imageReadyBlock = 0xFFFFFFFFUL;
+  _imageExpectedCrc = 0;
+  _imageBlockCrc = 0;
   _imageLine = "";
+  _imageLine.reserve(160);
 
-  char num[10];
-  snprintf(num, sizeof(num), "%06lu", (unsigned long)_imageCurrentBlock);
-  String cmd;
-  cmd.reserve(520);
-  cmd += "rm -f /tmp/bx3blk; dd if=" + _imageSource + " of=/tmp/bx3blk bs=" + String(IMAGE_BLOCK_SIZE) + " skip=" + String(_imageCurrentBlock) + " count=1 2>/dev/null; ";
-  cmd += "printf '\\n<<<BX3IMG:BEGIN:" + String(num) + ">>>\\n'; ";
-  cmd += "S=$(wc -c < /tmp/bx3blk); printf '<<<BX3IMG:SIZE:%s>>>\\n' \"$S\"; ";
-  cmd += "H=$(sha256sum /tmp/bx3blk); H=${H%% *}; printf '<<<BX3IMG:SHA256:%s>>>\\n' \"$H\"; ";
-  cmd += "base64 /tmp/bx3blk; printf '<<<BX3IMG:END:" + String(num) + ">>>\\n'; rm -f /tmp/bx3blk\r";
-
+  // The shell helper was installed once at transfer start. This reduces UART
+  // command traffic and shell parsing between blocks to a single short call.
+  const String cmd = "bx3img_block " + String(_imageCurrentBlock) + "\r";
   const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
   if (written != cmd.length()) {
-    _imageState = ImageState::Error;
-    _imageStatus = "Blockanforderung konnte nicht vollstaendig gesendet werden";
+    abortImageTransfer("Blockanforderung konnte nicht vollstaendig gesendet werden");
     return false;
   }
   _imageState = ImageState::WaitBegin;
@@ -1137,9 +1213,20 @@ bool UartManager::requestImageBlock() {
   return true;
 }
 
+void UartManager::recordImageError(const String& reason) {
+  if (reason.indexOf("Timeout") >= 0) ++_imageTimeoutErrors;
+  else if (reason.indexOf("CRC32") >= 0 || reason.indexOf("CRC") >= 0) ++_imageCrcErrors;
+  else if (reason.indexOf("SHA256") >= 0 || reason.indexOf("SHA-256") >= 0) ++_imageShaErrors;
+  else if (reason.indexOf("Base64") >= 0) ++_imageBase64Errors;
+  else if (reason.indexOf("Marker") >= 0 || reason.indexOf("Synchronisierung") >= 0) ++_imageMarkerErrors;
+  else if (reason.indexOf("Groesse") >= 0 || reason.indexOf("Laenge") >= 0 || reason.indexOf("Puffer") >= 0) ++_imageSizeErrors;
+  else ++_imageOtherErrors;
+}
+
 void UartManager::retryImageBlock(const String& reason) {
   if (!imageActive()) return;
   ++_imageErrors;
+  recordImageError(reason);
   if (_imageState == ImageState::WaitMtd) {
     abortImageTransfer("MTD-Ermittlung fehlgeschlagen: " + reason);
     return;
@@ -1195,8 +1282,21 @@ void UartManager::processImageLine(String line) {
       _imageTotalBlocks = (_imageTotalSize + IMAGE_BLOCK_SIZE - 1U) / IMAGE_BLOCK_SIZE;
       if (_imageStartBlock >= _imageTotalBlocks) { abortImageTransfer("Startblock liegt ausserhalb des Images"); return; }
       _imageCurrentBlock = _imageStartBlock;
-      _imageStatus = "MTD-Groesse " + String(_imageTotalSize) + " Byte; starte Blocktransfer";
+      _imageStatus = "MTD-Groesse " + String(_imageTotalSize) + " Byte; richte Blockhelfer ein";
+      if (!setupImageShellHelper()) abortImageTransfer("BX3-Blockhelfer konnte nicht eingerichtet werden");
+    }
+    return;
+  }
+
+  if (_imageState == ImageState::WaitSetup) {
+    if (line == "<<<BX3IMG:SETUP:OK>>>") {
+      _imageStatus = "BX3-Blockhelfer bereit; starte Blocktransfer";
       requestImageBlock();
+      return;
+    }
+    if (line == "<<<BX3IMG:SETUP:CKSUM_MISSING>>>") {
+      abortImageTransfer("BX3-Werkzeug cksum fehlt; CRC32-Blockpruefung nicht verfuegbar");
+      return;
     }
     return;
   }
@@ -1215,32 +1315,29 @@ void UartManager::processImageLine(String line) {
     const String n = line.substring(15, line.length() - 3);
     const uint32_t got = (uint32_t)strtoul(n.c_str(), nullptr, 10);
     if (got != _imageExpectedSize) { retryImageBlock("Groesse " + String(got) + " statt " + String(_imageExpectedSize)); return; }
-    _imageState = ImageState::WaitSha;
+    _imageState = ImageState::WaitCrc;
     return;
   }
-  if (_imageState == ImageState::WaitSha) {
-    if (!line.startsWith("<<<BX3IMG:SHA256:") || !line.endsWith(">>>")) { retryImageBlock("SHA256-Marker fehlt"); return; }
-    String h = line.substring(17, line.length() - 3); h.toLowerCase();
-    if (!isHex64(h)) { retryImageBlock("SHA256 ungueltig"); return; }
-    strncpy(_imageExpectedSha, h.c_str(), sizeof(_imageExpectedSha));
-    _imageExpectedSha[64] = '\0';
+  if (_imageState == ImageState::WaitCrc) {
+    if (!line.startsWith("<<<BX3IMG:CRC32:") || !line.endsWith(">>>")) { retryImageBlock("CRC32-Marker fehlt"); return; }
+    const String c = line.substring(16, line.length() - 3);
+    if (!c.length()) { retryImageBlock("CRC32 ungueltig"); return; }
+    for (size_t i = 0; i < c.length(); ++i) if (c[i] < '0' || c[i] > '9') { retryImageBlock("CRC32 ungueltig"); return; }
+    _imageExpectedCrc = (uint32_t)strtoul(c.c_str(), nullptr, 10);
     _imageState = ImageState::RxBase64;
     return;
   }
   if (_imageState == ImageState::RxBase64) {
     if (line == endMarker) {
       if (_imageBlockLength != _imageExpectedSize) { retryImageBlock("dekodierte Laenge stimmt nicht"); return; }
-      unsigned char hash[32];
-      mbedtls_sha256_context ctx;
-      mbedtls_sha256_init(&ctx);
-      if (mbedtls_sha256_starts_ret(&ctx, 0) != 0 || mbedtls_sha256_update_ret(&ctx, _imageBlock, _imageBlockLength) != 0 || mbedtls_sha256_finish_ret(&ctx, hash) != 0) {
-        mbedtls_sha256_free(&ctx); retryImageBlock("lokaler SHA256 Fehler"); return;
+      _imageBlockCrc = posixCksum(_imageBlock, _imageBlockLength);
+      if (_imageBlockCrc != _imageExpectedCrc) {
+        retryImageBlock("CRC32 stimmt nicht (BX3 " + String(_imageExpectedCrc) + ", ESP32 " + String(_imageBlockCrc) + ")");
+        return;
       }
-      mbedtls_sha256_free(&ctx);
-      shaHex(hash, _imageBlockSha);
-      if (strcmp(_imageBlockSha, _imageExpectedSha) != 0) { retryImageBlock("SHA256 stimmt nicht"); return; }
+      _imageReadyBlock = _imageCurrentBlock;
       _imageState = ImageState::BlockReady;
-      _imageStatus = "Block " + String(_imageCurrentBlock) + " validiert - wartet auf Browser";
+      _imageStatus = "Block " + String(_imageReadyBlock) + " validiert - wartet auf Browser";
       return;
     }
     if (line.startsWith("<<<BX3IMG:")) { retryImageBlock("unerwarteter Marker"); return; }
@@ -1264,16 +1361,19 @@ void UartManager::processImageLine(String line) {
   }
 }
 
-size_t UartManager::imageReadBlock(size_t offset, uint8_t* out, size_t maxLen) const {
-  if (_imageState != ImageState::BlockReady || !out || offset >= _imageBlockLength) return 0;
+size_t UartManager::imageReadBlock(uint32_t blockNumber, size_t offset, uint8_t* out, size_t maxLen) const {
+  if (_imageState != ImageState::BlockReady || _imageReadyBlock == 0xFFFFFFFFUL || blockNumber != _imageReadyBlock || !out || offset >= _imageBlockLength) return 0;
   size_t n = _imageBlockLength - offset;
   if (n > maxLen) n = maxLen;
   memcpy(out, _imageBlock + offset, n);
   return n;
 }
 
-bool UartManager::imageAcknowledgeBlock() {
-  if (_imageState != ImageState::BlockReady) return false;
+bool UartManager::imageAcknowledgeBlock(uint32_t blockNumber) {
+  // Idempotent ACK: if the browser did not receive the HTTP response, the same
+  // ACK may safely be repeated without skipping another UART block.
+  if (_imageLastAckedBlock != 0xFFFFFFFFUL && blockNumber == _imageLastAckedBlock) return true;
+  if (_imageState != ImageState::BlockReady || _imageReadyBlock == 0xFFFFFFFFUL || blockNumber != _imageReadyBlock) return false;
   if (_imageOverallVerify && _imageShaStarted) {
     if (mbedtls_sha256_update_ret(&_imageSha, _imageBlock, _imageBlockLength) != 0) {
       abortImageTransfer("Gesamt-SHA256 Update fehlgeschlagen");
@@ -1281,6 +1381,8 @@ bool UartManager::imageAcknowledgeBlock() {
     }
   }
   _imageAcceptedBytes += _imageBlockLength;
+  _imageLastAckedBlock = blockNumber;
+  _imageReadyBlock = 0xFFFFFFFFUL;
   ++_imageCurrentBlock;
   _imageRetries = 0;
   if (_imageCurrentBlock >= _imageTotalBlocks) {
@@ -1310,12 +1412,15 @@ void UartManager::finishImageSha() {
     if (ok && strcmp(_imageLocalTotalSha, _imageRemoteTotalSha) != 0) ok = false;
   }
   if (!ok) {
-    _imageState = ImageState::Error;
-    _imageStatus = "Gesamt-SHA256 stimmt nicht";
     ++_imageErrors;
+    ++_imageShaErrors;
+    abortImageTransfer("Gesamt-SHA256 stimmt nicht");
     return;
   }
   _imageState = ImageState::Done;
+  _imageRestartRequired = false;
+  _imageConsoleConfirmed = false;
+  _imageReadyBlock = 0xFFFFFFFFUL;
   _imageStatus = _imageOverallVerify ? "IMAGE VERIFIED" : "Transfer beendet; Gesamtpruefung bei Resume nicht verfuegbar";
   Serial.printf("[IMAGE] Fertig: %s\n", _imageStatus.c_str());
 }
@@ -1327,14 +1432,37 @@ String UartManager::imageStatusJson() const {
   const bool active = imageActive();
   const bool done = _imageState == ImageState::Done;
   const bool error = _imageState == ImageState::Error;
+  const bool ready = _imageState == ImageState::BlockReady && _imageReadyBlock != 0xFFFFFFFFUL;
+  String phase = "idle";
+  switch (_imageState) {
+    case ImageState::WaitMtd: phase = "wait_mtd"; break;
+    case ImageState::WaitSetup: phase = "wait_setup"; break;
+    case ImageState::WaitBegin: phase = "wait_begin"; break;
+    case ImageState::WaitSize: phase = "wait_size"; break;
+    case ImageState::WaitCrc: phase = "wait_crc"; break;
+    case ImageState::RxBase64: phase = "receiving"; break;
+    case ImageState::BlockReady: phase = "ready"; break;
+    case ImageState::WaitTotalSha: phase = "wait_total_sha"; break;
+    case ImageState::Done: phase = "done"; break;
+    case ImageState::Error: phase = "error"; break;
+    default: break;
+  }
   String j;
-  j.reserve(900);
+  j.reserve(1400);
   j += "{\"active\":" + String(active ? "true" : "false") + ",\"done\":" + String(done ? "true" : "false") + ",\"error\":" + String(error ? "true" : "false");
-  j += ",\"block_ready\":" + String(_imageState == ImageState::BlockReady ? "true" : "false");
+  j += ",\"phase\":\"" + phase + "\",\"block_ready\":" + String(ready ? "true" : "false");
   j += ",\"status\":\"" + jsonEscape(_imageStatus) + "\",\"source\":\"" + jsonEscape(_imageSource) + "\"";
   j += ",\"total_size\":" + String(_imageTotalSize) + ",\"block_size\":" + String(IMAGE_BLOCK_SIZE) + ",\"total_blocks\":" + String(_imageTotalBlocks);
-  j += ",\"current_block\":" + String(_imageCurrentBlock) + ",\"start_block\":" + String(_imageStartBlock) + ",\"accepted_bytes\":" + String((unsigned long)(_imageAcceptedBytes & 0xFFFFFFFFULL));
+  j += ",\"current_block\":" + String(_imageCurrentBlock);
+  j += ",\"receiving_block\":" + String(ready ? _imageCurrentBlock : _imageCurrentBlock);
+  if (ready) j += ",\"ready_block\":" + String(_imageReadyBlock); else j += ",\"ready_block\":-1";
+  if (_imageLastAckedBlock != 0xFFFFFFFFUL) j += ",\"last_acked_block\":" + String(_imageLastAckedBlock); else j += ",\"last_acked_block\":-1";
+  j += ",\"start_block\":" + String(_imageStartBlock) + ",\"accepted_bytes\":" + String((unsigned long)(_imageAcceptedBytes & 0xFFFFFFFFULL));
   j += ",\"errors\":" + String(_imageErrors) + ",\"retries\":" + String(_imageRetryTotal) + ",\"retry_current\":" + String(_imageRetries);
+  j += ",\"error_timeout\":" + String(_imageTimeoutErrors) + ",\"error_crc\":" + String(_imageCrcErrors) + ",\"error_sha\":" + String(_imageShaErrors) + ",\"error_base64\":" + String(_imageBase64Errors);
+  j += ",\"error_marker\":" + String(_imageMarkerErrors) + ",\"error_size\":" + String(_imageSizeErrors) + ",\"error_other\":" + String(_imageOtherErrors);
+  j += ",\"restart_required\":" + String(_imageRestartRequired ? "true" : "false") + ",\"console_confirmed\":" + String(_imageConsoleConfirmed ? "true" : "false");
+  j += ",\"restart_allowed\":" + String(imageRestartAllowed() ? "true" : "false");
   j += ",\"rate_bps\":" + String(rate, 1) + ",\"overall_verify\":" + String(_imageOverallVerify ? "true" : "false");
   j += ",\"local_sha256\":\"" + String(_imageLocalTotalSha) + "\",\"remote_sha256\":\"" + String(_imageRemoteTotalSha) + "\"}";
   return j;

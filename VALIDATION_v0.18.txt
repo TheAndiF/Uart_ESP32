@@ -1,0 +1,39 @@
+Uart_Esp32 v0.18 - validation record
+Date: 2026-09-21
+Status: PARTIAL / hardware validation pending
+
+PASS - Source tree based on uploaded Uart_ESP32 v0.17 package.
+PASS - Firmware version updated to v0.18 / 0.18.0.
+PASS - UartManager.cpp + TestCandidateCatalog.cpp pass local g++ -std=c++17 -fsyntax-only with Arduino/ESP32 host stubs.
+PASS - main.cpp passes local g++ -std=c++17 -fsyntax-only with ESPAsyncWebServer host stubs.
+PASS - All embedded JavaScript blocks extracted from main.cpp pass node --check.
+PASS - Host restart-workflow test passes: start -> interrupt -> restart blocked -> console confirmation -> restart allowed.
+PASS - Image status separates current_block, ready_block and last_acked_block.
+PASS - Premature /uart/image/block requests return HTTP 202 wait responses instead of a hard browser error.
+PASS - Browser requests a specific ready block number and firmware validates that block number.
+PASS - Image ACK is block-bound and idempotent for the last acknowledged block.
+PASS - Browser keeps a pending block until ACK succeeds and only then appends it to the final chunk list.
+PASS - Image errors are categorized as timeout, SHA, Base64, marker, size/buffer or other.
+PASS - Interrupted/aborted image transfer releases normal UART ownership and marks restart_required.
+PASS - Fresh image start is blocked after interruption until console access is explicitly confirmed.
+PASS - UART console shows the confirmation control only while image restart is pending.
+PASS - Explicit restart route starts a new full-image transfer at block 0 after console confirmation.
+PASS - Existing copy-friendly console, autoscroll, decoder, probe-runner and UART settings remain present.
+PASS - Existing WLAN/NTP/MQTT/Battery/DeepSleep/OTA source files were not functionally changed.
+PASS - DOCX rendered to 7 pages and was visually reviewed.
+PASS - PDF rendered to 7 pages and was visually reviewed.
+
+NOT RUN - Real PlatformIO build (PlatformIO executable not available in this environment).
+NOT RUN - ESP32-WROOM-32 / NodeMCU-32S flash test.
+NOT RUN - BX3 serial shell / /dev/mtd7ro hardware test.
+NOT RUN - Real 16 MiB transfer with forced WLAN/HTTP interruption.
+NOT RUN - Independent PC SHA-256 comparison against BX3 sha256sum.
+
+Required before deployment:
+1. pio run -e uart_esp32_usb
+2. Flash test on the target ESP32.
+3. Verify UART RX/TX electrical levels on the BX3.
+4. Start an image transfer and verify current/ready/ACK block separation.
+5. Force an interruption and verify the UART console is usable again.
+6. Restore BX3 shell access, confirm it in UART Console, and verify image restart is enabled.
+7. Complete a full backup from block 0 and compare an independent PC SHA-256.

@@ -2,7 +2,18 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.17
+## Stand v0.19
+
+**Neu v0.19:** Der UART Image-Transfer wurde fuer weniger CPU-/Shell-Overhead und robusteren Durchsatz optimiert. Pro 32-KiB-Block wird jetzt **POSIX `cksum` CRC32** statt SHA-256 verwendet; die **Gesamt-SHA256-Pruefung des vollstaendigen Images bleibt erhalten**. Der ESP32 vergleicht dazu seinen eigenen POSIX-CRC32 mit dem vom BX3 gelieferten `cksum`-Wert. Voraussetzung auf dem BX3 ist damit zusaetzlich das Kommando `cksum`; fehlt es, bricht der Transfer kontrolliert ab und gibt die Konsole wieder frei.
+
+Der Hardware-UART-RX-Puffer wird vor `HardwareSerial.begin()` auf **16 KiB** vergroessert. Waehrend eines aktiven Image-Transfers verarbeitet die Hauptschleife pro Durchlauf bis zu **8192 RX-Bytes** statt 512. Dadurch koennen Base64-Bursts schneller geleert werden und der Webserver hat mehr Pufferreserve. Auf dem BX3 wird einmalig die Shell-Funktion `bx3img_block` installiert. Danach sendet der ESP32 pro Block nur noch `bx3img_block N`; `cksum` liefert dabei CRC32 und Laenge in einem Aufruf und ersetzt die bisherige Kombination aus `wc` + Block-SHA256.
+
+Der Browserblock wird nicht mehr als HTTP-Chunked-Response ausgegeben, sondern mit bekannter **Content-Length** direkt aus dem bereits validierten ESP32-Blockpuffer gestreamt. Dadurch entfaellt HTTP-Chunked-Framing fuer die 32-KiB-Bloecke. Die Synchronisierung, idempotenten ACKs und die Konsolenfreigabe nach einer Unterbrechung aus v0.18 bleiben unveraendert erhalten.
+
+
+**Neu v0.18:** Der UART Image-Transfer synchronisiert Browser und ESP32 jetzt explizit ueber getrennte Zustandswerte fuer **Empfangsblock**, **browserbereiten Block** und **letztes ACK**. Ein zu frueher HTTP-Abruf liefert `202 Accepted` statt eines sichtbaren Fehlers. ACKs sind blocknummerngebunden und idempotent, damit ein verlorener HTTP-ACK keine doppelten Browserbloecke oder einen unbeabsichtigten Blocksprung verursacht. Fehler werden zusaetzlich nach Timeout, SHA, Base64, Marker, Groesse/Puffer und Sonstige aufgeschluesselt.
+
+Nach Abbruch oder nicht wiederherstellbarem Fehler wird die UART-Konsole automatisch wieder freigegeben. Ein Image-Neustart ist danach **bewusst gesperrt**, bis der Benutzer die UART-Konsole oeffnet, den BX3-Shell-Zugriff wiederherstellt und dies dort mit **Konsolenzugriff hergestellt - Image-Neustart freigeben** bestaetigt. Erst danach wird auf der Image-Seite **Transfer komplett neu starten (Block 0)** aktiv. Der Neustart beginnt absichtlich bei Block 0, weil beim Wechsel zur Konsole die bereits im Browser gesammelten Teile eines Vollimages nicht verlaesslich erhalten bleiben.
 
 **Neu v0.17:** Die UART-Konsole ist jetzt kopierfreundlich: `user-select:text`, Anzeige-Pause bei weiterlaufendem UART-Empfang, Schutz einer aktiven Textmarkierung vor Live-Neuzeichnen sowie Schaltflaechen fuer markierten Text und die gesamte Ansicht. Zusaetzlich gibt es das Hauptmenue **UART Image-Transfer**. Es liest ein read-only MTD-Device (z. B. `/dev/mtd7ro`) blockweise mit 32 KiB ueber die BX3-Shell (`dd`, `base64`, `sha256sum`), prueft Groesse und SHA-256 pro Block, wiederholt fehlerhafte Bloecke bis zu fuenfmal und vergleicht bei einem Volltransfer ab Block 0 den Gesamt-SHA256. Der Browser sammelt nur bereits validierte Bloecke und stellt am Ende die Image-Datei zum Download bereit; der ESP32 haelt nie das gesamte Image im RAM. Waehrend des Transfers ist UART TX/RX exklusiv fuer den Image-Parser reserviert.
 
@@ -19,7 +30,7 @@ Die UART Konsole wurde auf einen 8192-Byte-Ringpuffer erweitert und kann RX als 
 
 ### Historische Änderungshinweise
 
-Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.17-Architektur widersprechen, gilt die Beschreibung von v0.17 weiter oben.
+Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.19-Architektur widersprechen, gilt die Beschreibung von v0.19 weiter oben.
 
 **Neu v0.14:** Zusaetzlich zu Raw/Sniffer und Protokoll-Decoder gibt es den Modus **BX3 Konsole**. Er setzt die im beigefuegten BX3/ESP32-Leitfaden beschriebene bidirektionale UART-Verbindung fuer Boottext, Login und Shell-Eingaben um. Die Weboberflaeche `/uart/console` zeigt einen laufenden Terminalpuffer, kann Text mit bewusst waehlbarem Zeilenabschluss (CR, LF, CRLF oder keiner) senden und stellt Enter, Ctrl+C, Ctrl+D und TAB als eigene Aktionen bereit. Eine Passwort-Eingabe kann im Browser verdeckt werden; eingegebene Zeichen werden nicht persistent gespeichert. Der Modus verwendet die normalen UART-Einstellungen und ist damit auf 115200/8N1 einstellbar, wie es der Leitfaden als Arbeitswert fuer die BX3-Konsole nennt. RX-Daten werden ausserdem auf den lokalen seriellen USB/UART0-Monitor gespiegelt; dort koennen Firmware-Diagnosemeldungen dazwischen erscheinen. Bytes, die lokal ueber USB/UART0 eingegeben werden, werden im Konsolenmodus unveraendert zum Ziel-UART weitergereicht.
 

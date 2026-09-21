@@ -1,0 +1,20 @@
+Uart_Esp32 v0.19 - Validation
+Date: 2026-09-21
+
+PASS - Source consistency: per-block SHA state removed and CRC32/WaitCrc/WaitSetup states present.
+PASS - All four embedded JavaScript blocks in src/main.cpp pass node --check.
+PASS - ESPAsyncWebServer version included in the project exposes beginResponse(contentType, size_t len, AwsResponseFiller), used for fixed-length image blocks.
+PASS - Standalone C++17 implementation of the v0.19 POSIX cksum CRC32 matches the host cksum utility for a 32 KiB random payload.
+PASS - New bx3img_block shell helper syntax tested with /bin/sh and a 32 KiB block; BEGIN/SIZE/CRC32/END markers generated as expected.
+PASS - Firmware version strings set to v0.19 / 0.19.0.
+PASS - Existing v0.18 restart gating and console-confirm routes remain present.
+
+PENDING - Real PlatformIO build (pio not installed in the execution environment).
+PENDING - Flash test on ESP32-WROOM-32 / NodeMCU-32S.
+PENDING - Verify cksum availability on the target BX3 shell.
+PENDING - Real 16 MiB BX3 end-to-end transfer and throughput comparison with v0.18.
+PENDING - Independent PC SHA-256 comparison of the downloaded image.
+PASS - v0.19 text patch dry-runs cleanly against the v0.18 project base.
+PASS - Full and changed-files ZIP archives pass unzip -t and preserve the Uart_ESP32 root folder.
+PASS - DOCX rendered to 6 pages and all pages were visually inspected without clipping/overlap.
+PASS - PDF rendered to 6 pages and visually matches the DOCX output.

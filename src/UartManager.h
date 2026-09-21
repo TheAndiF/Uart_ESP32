@@ -129,21 +129,29 @@ public:
   bool probeReactionDetected() const { return _probeReactionFlags != 0; }
   String probeReactionText() const;
 
-  // BX3 image transfer (v0.17). The transfer owns UART TX/RX while active and
-  // uses 32 KiB request/response blocks with per-block SHA-256 validation.
+  // BX3 image transfer. The transfer owns UART TX/RX while active. Since v0.19
+  // blocks are validated with POSIX cksum CRC32, while SHA-256 is retained only
+  // for the complete image.
   bool startImageTransfer(const String& source = "/dev/mtd7ro", uint32_t startBlock = 0);
   void abortImageTransfer(const String& reason = "manuell abgebrochen");
   bool imageActive() const;
   bool imageBlockReady() const;
-  bool imageAcknowledgeBlock();
+  uint32_t imageReadyBlock() const { return _imageReadyBlock; }
+  size_t imageReadyBlockLength() const { return imageBlockReady() ? _imageBlockLength : 0U; }
+  bool imageAcknowledgeBlock(uint32_t blockNumber);
+  bool confirmImageConsoleAccess();
+  bool imageRestartRequired() const { return _imageRestartRequired; }
+  bool imageRestartAllowed() const { return _imageRestartRequired && _imageConsoleConfirmed && !imageActive(); }
   String imageStatusJson() const;
-  size_t imageReadBlock(size_t offset, uint8_t* out, size_t maxLen) const;
+  size_t imageReadBlock(uint32_t blockNumber, size_t offset, uint8_t* out, size_t maxLen) const;
 
 private:
   static constexpr size_t RAW_CAPACITY = 512;
   static constexpr size_t PACKET_CAPACITY = 128;
   static constexpr size_t CONSOLE_CAPACITY = 8192;
   static constexpr size_t IMAGE_BLOCK_SIZE = 32768;
+  static constexpr size_t UART_RX_BUFFER_SIZE = 16384;
+  static constexpr size_t IMAGE_RX_DRAIN_BUDGET = 8192;
   static constexpr uint8_t IMAGE_MAX_RETRIES = 5;
 
   HardwareSerial _uart1{1};
@@ -258,8 +266,9 @@ private:
   uint8_t _seenCommandBits[8192]{}; // 65536 command IDs, 1 bit each
 
   enum class ImageState : uint8_t {
-    Idle = 0, WaitMtd = 1, WaitBegin = 2, WaitSize = 3, WaitSha = 4,
-    RxBase64 = 5, BlockReady = 6, WaitTotalSha = 7, Done = 8, Error = 9
+    Idle = 0, WaitMtd = 1, WaitSetup = 2, WaitBegin = 3, WaitSize = 4,
+    WaitCrc = 5, RxBase64 = 6, BlockReady = 7, WaitTotalSha = 8,
+    Done = 9, Error = 10
   };
   ImageState _imageState = ImageState::Idle;
   String _imageSource = "/dev/mtd7ro";
@@ -268,23 +277,34 @@ private:
   uint32_t _imageTotalSize = 0;
   uint32_t _imageTotalBlocks = 0;
   uint32_t _imageCurrentBlock = 0;
+  uint32_t _imageReadyBlock = 0xFFFFFFFFUL;
+  uint32_t _imageLastAckedBlock = 0xFFFFFFFFUL;
   uint32_t _imageStartBlock = 0;
   uint32_t _imageExpectedSize = 0;
   uint32_t _imageBlockLength = 0;
   uint8_t _imageBlock[IMAGE_BLOCK_SIZE]{};
-  char _imageExpectedSha[65]{};
-  char _imageBlockSha[65]{};
+  uint32_t _imageExpectedCrc = 0;
+  uint32_t _imageBlockCrc = 0;
   char _imageLocalTotalSha[65]{};
   char _imageRemoteTotalSha[65]{};
   uint8_t _imageRetries = 0;
   uint32_t _imageRetryTotal = 0;
   uint32_t _imageErrors = 0;
+  uint32_t _imageTimeoutErrors = 0;
+  uint32_t _imageCrcErrors = 0;
+  uint32_t _imageShaErrors = 0;
+  uint32_t _imageBase64Errors = 0;
+  uint32_t _imageMarkerErrors = 0;
+  uint32_t _imageSizeErrors = 0;
+  uint32_t _imageOtherErrors = 0;
   uint64_t _imageAcceptedBytes = 0;
   unsigned long _imageStartedMillis = 0;
   unsigned long _imageLastRxMillis = 0;
   bool _imageOverallVerify = false;
   bool _imageMtdMarkerSeen = false;
   bool _imageShaStarted = false;
+  bool _imageRestartRequired = false;
+  bool _imageConsoleConfirmed = false;
   mbedtls_sha256_context _imageSha{};
 
   uint32_t serialConfig() const;
@@ -306,10 +326,13 @@ private:
   void updatePacketChecksum(uint8_t* packet, size_t packetLength) const;
   void processImageByte(uint8_t value);
   void processImageLine(String line);
+  bool setupImageShellHelper();
   bool requestImageBlock();
   void retryImageBlock(const String& reason);
+  void recordImageError(const String& reason);
   void requestImageTotalSha();
   void finishImageSha();
   bool validateImageSource(const String& source, uint8_t& mtdNo) const;
+  static uint32_t posixCksum(const uint8_t* data, size_t length);
   static String jsonEscape(const String& value);
 };

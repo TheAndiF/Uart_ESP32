@@ -1,0 +1,20 @@
+BL_Optimize UART image transfer throughput
+Date: 2026-09-21
+Summary:
+- Replaced per-block SHA-256 validation with POSIX cksum CRC32 while retaining the final full-image SHA-256 verification.
+- Increased the HardwareSerial RX buffer to 16 KiB before UART initialization.
+- Increased the image-transfer RX drain budget from 512 to 8192 bytes per loop iteration.
+- Added a persistent BX3 shell helper so each block request uses a short bx3img_block command and cksum provides both CRC32 and byte count.
+- Changed validated block delivery from HTTP chunked transfer to a fixed Content-Length callback response directly from the ESP32 block buffer.
+- Kept the v0.18 browser synchronization, idempotent ACK, console re-arm and restart gating behavior unchanged.
+Changed files:
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- src/ConfigDefaults.h
+- README.md
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.19.md
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.19.docx
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.19.pdf
+- docs/2026-09-21 - Uart_Esp32 - Commit-Nachricht - Image-Transfer-Durchsatz - v0.19.txt
+- VALIDATION_v0.19.txt

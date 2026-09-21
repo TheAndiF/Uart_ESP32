@@ -1,0 +1,21 @@
+BL_Fix image transfer synchronization and restart gating
+Date: 2026-09-21
+Summary:
+- Separated receiving, browser-ready and acknowledged image block state.
+- Changed premature block requests into HTTP 202 wait responses.
+- Added block-bound idempotent acknowledgements to prevent duplicate browser chunks.
+- Added categorized image-transfer error counters.
+- Released the UART console after interrupted transfers and required explicit console-access confirmation before an image restart.
+- Added a clean full-image restart from block 0 after console confirmation.
+- Kept existing WLAN, MQTT, OTA, battery, deep-sleep, decoder and probe-runner functions unchanged.
+Changed files:
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- src/ConfigDefaults.h
+- README.md
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.18.md
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.18.docx
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.18.pdf
+- docs/2026-09-21 - Uart_Esp32 - Commit-Nachricht - Image-Transfer-Synchronisierung - v0.18.txt
+- VALIDATION_v0.18.txt
