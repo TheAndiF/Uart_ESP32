@@ -1,0 +1,19 @@
+BL_Add snapshot file sources for image transfer
+Date: 2026-09-21
+Summary:
+- Added safe snapshot-file sources for the UART Image-Transfer page.
+- Allowed /tmp/*.img, /tmp/*.img.gz, /var/tmp/*.img and /var/tmp/*.img.gz in addition to /dev/mtdNro.
+- Added file-size discovery via wc -c and reused the existing CRC32/base64 block-transfer path for snapshot files.
+- Updated the browser download name handling so snapshot downloads keep their source filename, for example mtd7.img.gz.
+- Bumped firmware metadata to v0.20 / 0.20.0 and documented the change.
+Changed files:
+- README.md
+- src/ConfigDefaults.h
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.20.md
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.20.docx
+- docs/2026-09-21 - Uart_Esp32 - Projektdokumentation - Firmware - v0.20.pdf
+- docs/2026-09-21 - Uart_Esp32 - Commit-Nachricht - Snapshot-Dateiquellen - v0.20.txt
+- VALIDATION_v0.20.txt

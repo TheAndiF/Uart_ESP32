@@ -1,0 +1,29 @@
+--- v020_orig/Uart_ESP32/src/UartManager.h	2026-09-21 20:05:33.000000000 +0000
++++ v020/Uart_ESP32/src/UartManager.h	2026-09-21 21:19:37.140297420 +0000
+@@ -131,7 +131,8 @@
+ 
+   // BX3 image transfer. The transfer owns UART TX/RX while active. Since v0.19
+   // blocks are validated with POSIX cksum CRC32, while SHA-256 is retained only
+-  // for the complete image.
++  // for the complete image. Since v0.20 the source may also be a prebuilt
++  // snapshot file from /tmp or /var/tmp, e.g. /tmp/mtd7.img.gz.
+   bool startImageTransfer(const String& source = "/dev/mtd7ro", uint32_t startBlock = 0);
+   void abortImageTransfer(const String& reason = "manuell abgebrochen");
+   bool imageActive() const;
+@@ -302,6 +303,7 @@
+   unsigned long _imageLastRxMillis = 0;
+   bool _imageOverallVerify = false;
+   bool _imageMtdMarkerSeen = false;
++  bool _imageSourceIsFile = false;
+   bool _imageShaStarted = false;
+   bool _imageRestartRequired = false;
+   bool _imageConsoleConfirmed = false;
+@@ -332,7 +334,7 @@
+   void recordImageError(const String& reason);
+   void requestImageTotalSha();
+   void finishImageSha();
+-  bool validateImageSource(const String& source, uint8_t& mtdNo) const;
++  bool validateImageSource(const String& source, uint8_t& mtdNo, bool& fileSource) const;
+   static uint32_t posixCksum(const uint8_t* data, size_t length);
+   static String jsonEscape(const String& value);
+ };

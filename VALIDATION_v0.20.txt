@@ -1,0 +1,32 @@
+Uart_Esp32 v0.20 - Validierungsprotokoll
+Datum: 2026-09-21
+
+Durchgefuehrte Pruefungen:
+- Projektpaket Uart_ESP32 (6).zip entpackt und als Ausgangsstand v0.19 verwendet.
+- Firmwarestand in src/ConfigDefaults.h auf 0.20.0 und in src/main.cpp auf v0.20 angehoben.
+- Snapshot-Dateiquellen in UartManager::validateImageSource() ergaenzt.
+- Erlaubte Quellen statisch begrenzt auf:
+  - /dev/mtdNro
+  - /tmp/*.img
+  - /tmp/*.img.gz
+  - /var/tmp/*.img
+  - /var/tmp/*.img.gz
+- Quelle mit Leerzeichen, Quotes, Semikolon, Pipe oder weiteren Unterpfaden wird durch die Zeichenpruefung verworfen.
+- JavaScript-Syntax aller eingebetteten Webskripte mit node --check geprueft.
+- C++17-Syntax von UartManager.cpp und TestCandidateCatalog.cpp mit lokalen ESP32/Arduino-Host-Stubs geprueft.
+- Patch gegen den hochgeladenen v0.19-Ausgangsstand erzeugt und mit patch -p1 erfolgreich auf eine frische Kopie angewendet.
+- Vollstaendiges ZIP und geaenderte-Dateien-ZIP erstellt.
+- DOCX-Dokumentation erzeugt, als PDF gerendert und visuell ueber alle Seiten kontrolliert.
+
+Nicht durchgefuehrt:
+- Kein echter PlatformIO-Build, da PlatformIO in der Arbeitsumgebung nicht installiert ist.
+- Kein Flashen auf einen ESP32.
+- Kein realer BX3-End-to-End-Test mit /tmp/mtd7.img.gz.
+
+Empfohlene naechste Tests:
+1. pio run -e uart_esp32_usb
+2. Firmware flashen.
+3. In der BX3-Konsole Snapshot erzeugen, z. B.:
+   dd if=/dev/mtd7ro bs=32768 2>/dev/null | gzip -c > /tmp/mtd7.img.gz && sync && ls -l /tmp/mtd7.img.gz && sha256sum /tmp/mtd7.img.gz
+4. In UART Image-Transfer als Quelle /tmp/mtd7.img.gz eintragen.
+5. Download abschliessen und SHA256 auf dem PC gegen den BX3-Wert vergleichen.

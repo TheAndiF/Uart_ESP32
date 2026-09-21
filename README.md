@@ -2,7 +2,12 @@
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.
 
-## Stand v0.19
+## Stand v0.20
+
+
+**Neu v0.20:** Der UART Image-Transfer akzeptiert jetzt neben read-only MTD-Quellen auch vorbereitete Snapshot-Dateien aus `/tmp` und `/var/tmp`. Erlaubt sind bewusst nur Dateien mit den Endungen `.img` und `.img.gz`, z. B. `/tmp/mtd7.img` oder `/tmp/mtd7.img.gz`. Dadurch kann zuerst in der BX3-Konsole ein stabiler Snapshot erzeugt werden und danach genau diese unveraenderliche Datei ueber die Image-Transfer-Seite heruntergeladen werden. Das ist wichtig, wenn sich `/dev/mtd7ro` im laufenden System veraendert und deshalb die Gesamt-SHA256-Pruefung eines Live-MTD-Transfers fehlschlaegt.
+
+Bei Snapshot-Dateien wird die Groesse ueber `wc -c` ermittelt und anschließend derselbe blockweise Transferpfad wie bei MTD-Quellen verwendet: `bx3img_block N`, `dd`, `cksum`, `base64`, CRC32 pro Block und Gesamt-SHA256 der Quelldatei. Der Browserdownload bekommt bei Datei-Quellen automatisch den Dateinamen der Quelle, z. B. `mtd7.img.gz`.
 
 **Neu v0.19:** Der UART Image-Transfer wurde fuer weniger CPU-/Shell-Overhead und robusteren Durchsatz optimiert. Pro 32-KiB-Block wird jetzt **POSIX `cksum` CRC32** statt SHA-256 verwendet; die **Gesamt-SHA256-Pruefung des vollstaendigen Images bleibt erhalten**. Der ESP32 vergleicht dazu seinen eigenen POSIX-CRC32 mit dem vom BX3 gelieferten `cksum`-Wert. Voraussetzung auf dem BX3 ist damit zusaetzlich das Kommando `cksum`; fehlt es, bricht der Transfer kontrolliert ab und gibt die Konsole wieder frei.
 
@@ -30,7 +35,7 @@ Die UART Konsole wurde auf einen 8192-Byte-Ringpuffer erweitert und kann RX als 
 
 ### Historische Änderungshinweise
 
-Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.19-Architektur widersprechen, gilt die Beschreibung von v0.19 weiter oben.
+Die folgenden Abschnitte dokumentieren frühere Zwischenstände. Wo sie der v0.20-Architektur widersprechen, gilt die Beschreibung von v0.20 weiter oben.
 
 **Neu v0.14:** Zusaetzlich zu Raw/Sniffer und Protokoll-Decoder gibt es den Modus **BX3 Konsole**. Er setzt die im beigefuegten BX3/ESP32-Leitfaden beschriebene bidirektionale UART-Verbindung fuer Boottext, Login und Shell-Eingaben um. Die Weboberflaeche `/uart/console` zeigt einen laufenden Terminalpuffer, kann Text mit bewusst waehlbarem Zeilenabschluss (CR, LF, CRLF oder keiner) senden und stellt Enter, Ctrl+C, Ctrl+D und TAB als eigene Aktionen bereit. Eine Passwort-Eingabe kann im Browser verdeckt werden; eingegebene Zeichen werden nicht persistent gespeichert. Der Modus verwendet die normalen UART-Einstellungen und ist damit auf 115200/8N1 einstellbar, wie es der Leitfaden als Arbeitswert fuer die BX3-Konsole nennt. RX-Daten werden ausserdem auf den lokalen seriellen USB/UART0-Monitor gespiegelt; dort koennen Firmware-Diagnosemeldungen dazwischen erscheinen. Bytes, die lokal ueber USB/UART0 eingegeben werden, werden im Konsolenmodus unveraendert zum Ziel-UART weitergereicht.
 

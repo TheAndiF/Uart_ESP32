@@ -1,0 +1,142 @@
+--- v020_orig/Uart_ESP32/src/UartManager.cpp	2026-09-21 20:05:33.000000000 +0000
++++ v020/Uart_ESP32/src/UartManager.cpp	2026-09-21 21:21:50.616209428 +0000
+@@ -1047,16 +1047,40 @@
+   return ~crc;
+ }
+ 
+-bool UartManager::validateImageSource(const String& source, uint8_t& mtdNo) const {
+-  // Version 1 intentionally limits reads to read-only MTD character devices.
++bool UartManager::validateImageSource(const String& source, uint8_t& mtdNo, bool& fileSource) const {
++  mtdNo = 0;
++  fileSource = false;
++
++  // Direct live source: read-only MTD character device.
+   // Accepted examples: /dev/mtd0ro ... /dev/mtd31ro
+-  if (!source.startsWith("/dev/mtd") || !source.endsWith("ro")) return false;
+-  const String n = source.substring(8, source.length() - 2);
+-  if (!n.length() || n.length() > 2U) return false;
+-  for (size_t i = 0; i < n.length(); ++i) if (n[i] < '0' || n[i] > '9') return false;
+-  const int v = n.toInt();
+-  if (v < 0 || v > 31) return false;
+-  mtdNo = (uint8_t)v;
++  if (source.startsWith("/dev/mtd") && source.endsWith("ro")) {
++    const String n = source.substring(8, source.length() - 2);
++    if (!n.length() || n.length() > 2U) return false;
++    for (size_t i = 0; i < n.length(); ++i) if (n[i] < '0' || n[i] > '9') return false;
++    const int v = n.toInt();
++    if (v < 0 || v > 31) return false;
++    mtdNo = (uint8_t)v;
++    return true;
++  }
++
++  // Snapshot file source added in v0.20. Keep this deliberately narrow so the
++  // web UI cannot turn the serial shell into an arbitrary file reader.
++  // Accepted examples: /tmp/mtd7.img, /tmp/mtd7.img.gz, /var/tmp/mtd7.img.gz
++  const bool tmp = source.startsWith("/tmp/");
++  const bool vartmp = source.startsWith("/var/tmp/");
++  if (!tmp && !vartmp) return false;
++  const int slash = source.lastIndexOf('/');
++  if (slash < 0 || slash >= (int)source.length() - 1) return false;
++  const String name = source.substring(slash + 1);
++  if (!(name.endsWith(".img") || name.endsWith(".img.gz"))) return false;
++  for (size_t i = 0; i < source.length(); ++i) {
++    const char c = source[i];
++    const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
++                    (c >= '0' && c <= '9') || c == '/' || c == '_' ||
++                    c == '-' || c == '.';
++    if (!ok) return false;
++  }
++  fileSource = true;
+   return true;
+ }
+ 
+@@ -1070,12 +1094,13 @@
+ 
+ bool UartManager::startImageTransfer(const String& source, uint32_t startBlock) {
+   uint8_t mtdNo = 0;
++  bool fileSource = false;
+   if (imageActive()) { _imageStatus = "Transfer laeuft bereits"; return false; }
+   if (_imageRestartRequired && !_imageConsoleConfirmed) {
+     _imageStatus = "Neustart gesperrt: zuerst UART Konsole oeffnen, Shell-Zugriff herstellen und dort bestaetigen";
+     return false;
+   }
+-  if (!validateImageSource(source, mtdNo)) { _imageStatus = "Quelle ungueltig; erlaubt ist /dev/mtdNro"; return false; }
++  if (!validateImageSource(source, mtdNo, fileSource)) { _imageStatus = "Quelle ungueltig; erlaubt ist /dev/mtdNro oder /tmp/*.img(.gz)"; return false; }
+   if (!_running || !_serial) { _imageStatus = "UART ist gestoppt"; return false; }
+   if (!_txEnabled || _txPin < 0 || !validTxPin(_txPin)) { _imageStatus = "TX ist nicht freigegeben"; return false; }
+   if (_probeState != ProbeState::Idle || _txActive) { _imageStatus = "TX ist durch eine andere Funktion belegt"; return false; }
+@@ -1109,6 +1134,7 @@
+   _imageLastRxMillis = millis();
+   _imageOverallVerify = (startBlock == 0U);
+   _imageMtdMarkerSeen = false;
++  _imageSourceIsFile = fileSource;
+   _imageShaStarted = false;
+   _imageRestartRequired = false;
+   _imageConsoleConfirmed = false;
+@@ -1127,8 +1153,16 @@
+   }
+ 
+   _imageState = ImageState::WaitMtd;
+-  _imageStatus = "ermittle MTD-Groesse";
+-  const String cmd = "\r\nprintf '\\n<<<BX3IMG:MTD_BEGIN>>>\\n'; cat /proc/mtd | grep '^mtd" + String(mtdNo) + ":'; printf '<<<BX3IMG:MTD_END>>>\\n'\r";
++  String cmd;
++  if (_imageSourceIsFile) {
++    _imageStatus = "ermittle Snapshot-Dateigroesse";
++    cmd = "\r\nprintf '\n<<<BX3IMG:FILE_BEGIN>>>\n'; ";
++    cmd += "if [ -r " + _imageSource + " ]; then S=$(wc -c < " + _imageSource + "); printf '<<<BX3IMG:FILE_SIZE:%s>>>\n' \"$S\"; else printf '<<<BX3IMG:FILE_ERROR:NOT_READABLE>>>\n'; fi; ";
++    cmd += "printf '<<<BX3IMG:FILE_END>>>\n'\r";
++  } else {
++    _imageStatus = "ermittle MTD-Groesse";
++    cmd = "\r\nprintf '\n<<<BX3IMG:MTD_BEGIN>>>\n'; cat /proc/mtd | grep '^mtd" + String(mtdNo) + ":'; printf '<<<BX3IMG:MTD_END>>>\n'\r";
++  }
+   _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+   _imageLastRxMillis = millis();
+   Serial.printf("[IMAGE] Start %s ab Block %lu\n", _imageSource.c_str(), (unsigned long)_imageStartBlock);
+@@ -1228,7 +1262,7 @@
+   ++_imageErrors;
+   recordImageError(reason);
+   if (_imageState == ImageState::WaitMtd) {
+-    abortImageTransfer("MTD-Ermittlung fehlgeschlagen: " + reason);
++    abortImageTransfer("Quellgroesse konnte nicht ermittelt werden: " + reason);
+     return;
+   }
+   if (_imageState == ImageState::WaitTotalSha) {
+@@ -1263,7 +1297,29 @@
+   if (!line.length()) return;
+ 
+   if (_imageState == ImageState::WaitMtd) {
+-    if (line == "<<<BX3IMG:MTD_BEGIN>>>") { _imageMtdMarkerSeen = true; return; }
++    if (line == "<<<BX3IMG:MTD_BEGIN>>>" || line == "<<<BX3IMG:FILE_BEGIN>>>") { _imageMtdMarkerSeen = true; return; }
++    if (_imageSourceIsFile) {
++      if (line.startsWith("<<<BX3IMG:FILE_SIZE:") && line.endsWith(">>>")) {
++        const String n = line.substring(20, line.length() - 3);
++        _imageTotalSize = (uint32_t)strtoul(n.c_str(), nullptr, 10);
++        return;
++      }
++      if (line == "<<<BX3IMG:FILE_ERROR:NOT_READABLE>>>") {
++        abortImageTransfer("Snapshot-Datei ist nicht lesbar");
++        return;
++      }
++      if (line == "<<<BX3IMG:FILE_END>>>") {
++        if (!_imageMtdMarkerSeen) { abortImageTransfer("Shell-Synchronisierung fehlgeschlagen"); return; }
++        if (!_imageTotalSize) { abortImageTransfer("Snapshot-Dateigroesse konnte nicht gelesen werden"); return; }
++        _imageTotalBlocks = (_imageTotalSize + IMAGE_BLOCK_SIZE - 1U) / IMAGE_BLOCK_SIZE;
++        if (_imageStartBlock >= _imageTotalBlocks) { abortImageTransfer("Startblock liegt ausserhalb der Snapshot-Datei"); return; }
++        _imageCurrentBlock = _imageStartBlock;
++        _imageStatus = "Snapshot-Datei " + String(_imageTotalSize) + " Byte; richte Blockhelfer ein";
++        if (!setupImageShellHelper()) abortImageTransfer("BX3-Blockhelfer konnte nicht eingerichtet werden");
++        return;
++      }
++      return;
++    }
+     if (_imageMtdMarkerSeen && line.startsWith("mtd")) {
+       const int colon = line.indexOf(':');
+       if (colon > 3) {
+@@ -1452,6 +1508,7 @@
+   j += "{\"active\":" + String(active ? "true" : "false") + ",\"done\":" + String(done ? "true" : "false") + ",\"error\":" + String(error ? "true" : "false");
+   j += ",\"phase\":\"" + phase + "\",\"block_ready\":" + String(ready ? "true" : "false");
+   j += ",\"status\":\"" + jsonEscape(_imageStatus) + "\",\"source\":\"" + jsonEscape(_imageSource) + "\"";
++  j += ",\"source_is_file\":" + String(_imageSourceIsFile ? "true" : "false");
+   j += ",\"total_size\":" + String(_imageTotalSize) + ",\"block_size\":" + String(IMAGE_BLOCK_SIZE) + ",\"total_blocks\":" + String(_imageTotalBlocks);
+   j += ",\"current_block\":" + String(_imageCurrentBlock);
+   j += ",\"receiving_block\":" + String(ready ? _imageCurrentBlock : _imageCurrentBlock);
