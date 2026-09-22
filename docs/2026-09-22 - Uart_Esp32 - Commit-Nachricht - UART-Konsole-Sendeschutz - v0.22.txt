@@ -1,0 +1,16 @@
+BL_Fix UART console input sending
+Date: 2026-09-22
+Summary:
+- Added a browser-side send lock, duplicate suppression and cooldown for UART console input.
+- Clear the input before sending while restoring it if the request fails.
+- Ignore repeated Enter key events to prevent duplicated login strings such as rootrootroot.
+- Keep the Image Transfer source field local to the browser and add quick buttons for snapshot and live-MTD sources.
+- Updated firmware version identifiers to v0.22 / 0.22.0.
+Changed files:
+- src/main.cpp
+- src/ConfigDefaults.h
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.22.md
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.22.docx
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.22.pdf
+- docs/2026-09-22 - Uart_Esp32 - Commit-Nachricht - UART-Konsole-Sendeschutz - v0.22.txt
+- VALIDATION_v0.22.txt

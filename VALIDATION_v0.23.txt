@@ -1,0 +1,27 @@
+Uart_Esp32 - Validation v0.23
+Date: 2026-09-22
+
+Scope:
+- Stabilize UART Image-Transfer source input.
+- Keep user-selected /tmp/mtd7.img.gz independent from status polling.
+
+Checks performed:
+- Embedded JavaScript blocks extracted from src/main.cpp.
+- node --check executed successfully for all extracted JavaScript blocks.
+- Firmware version strings updated to v0.23 and 0.23.0.
+- ZIP package structure checked for unchanged root folder Uart_ESP32/.
+- Patch v0.22 -> v0.23 generated and test-applied successfully.
+- DOCX rendered to PNG pages and PDF, then visually inspected.
+
+Not performed in this environment:
+- PlatformIO build.
+- Flashing to ESP32 hardware.
+- Real BX3 Image-Transfer test.
+
+Recommended hardware test:
+1. Flash v0.23.
+2. Hard reload the browser page (Ctrl+F5 or browser cache clear).
+3. Open UART Image-Transfer.
+4. Verify the source field defaults to /tmp/mtd7.img.gz.
+5. Type a different source and confirm it is not overwritten by the status refresh.
+6. Use the Snapshot preset button and start a transfer only after the intended value is visible.

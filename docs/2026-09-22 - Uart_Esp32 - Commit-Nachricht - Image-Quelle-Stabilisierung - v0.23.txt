@@ -1,0 +1,16 @@
+BL_Stabilize image source input
+Date: 2026-09-22
+Summary:
+- Separated the UART Image-Transfer source input from status polling.
+- Added versioned browser storage for the next transfer source.
+- Kept /tmp/mtd7.img.gz as the default snapshot source for v0.23.
+- Added source preset buttons and cache-safety metadata for the web UI.
+- Updated firmware version identifiers to v0.23 / 0.23.0.
+Changed files:
+- src/main.cpp
+- src/ConfigDefaults.h
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.23.md
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.23.docx
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.23.pdf
+- docs/2026-09-22 - Uart_Esp32 - Commit-Nachricht - Image-Quelle-Stabilisierung - v0.23.txt
+- VALIDATION_v0.23.txt

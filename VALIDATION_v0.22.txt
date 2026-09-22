@@ -1,0 +1,26 @@
+Uart_Esp32 v0.22 - Validierungsprotokoll
+Datum: 2026-09-22
+
+Durchgefuehrte Pruefungen:
+- Firmwarekennung in src/main.cpp auf v0.22 gesetzt.
+- UART_FW_VERSION in src/ConfigDefaults.h auf 0.22.0 gesetzt.
+- Eingebettete JavaScript-Bloecke aus src/main.cpp extrahiert und mit node --check geprueft.
+- Patch v0.21 -> v0.22 erzeugt.
+- ZIP-Pakete auf Integritaet pruefen.
+- DOCX und PDF der Projektdokumentation rendern und visuell kontrollieren.
+
+Gepruefte Korrekturen:
+- UART-Konsole besitzt eine Sendesperre waehrend eines laufenden HTTP-Senderequests.
+- Wiederholte identische Eingaben innerhalb der Cooldown-Zeit werden im Browser blockiert.
+- Enter-Repeat und IME-Komposition loesen keine zweite Sendung aus.
+- Eingabefeld wird sofort geleert, bei Sendefehler aber wiederhergestellt.
+- Status-Polling ueberschreibt das Image-Quellenfeld nicht mehr.
+- Image-Quellenfeld wird lokal im Browser gespeichert und Schnellbuttons setzen /tmp/mtd7.img.gz oder /dev/mtd7ro.
+
+Nicht durchgefuehrt / offen:
+- Kein echter PlatformIO-Build in dieser Umgebung.
+- Kein Flash-Test auf realem ESP32.
+- Kein realer BX3-End-to-End-Test mit Login und Image-Transfer.
+
+Hinweis:
+Vor dem Flashen sollte lokal pio run -e uart_esp32_usb ausgefuehrt werden. Danach sollte der Login mit einzelnen Eingaben wie root getestet werden.
