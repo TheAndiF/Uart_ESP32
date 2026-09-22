@@ -1,0 +1,13 @@
+BL_Fix file upload status JSON build error
+Date: 2026-09-22
+
+Summary:
+- Fixed malformed JSON string literals in UartManager::fileUploadStatusJson().
+- Escaped the JSON property quotes for errors, retry_requested, chunk_retries and local_crc.
+- Kept the firmware feature set and version at v0.24 because this is a build correction of the same work state.
+- No functional transfer logic was changed.
+- Kept the original project root folder name Uart_ESP32 for code package delivery.
+
+Changed files:
+- src/UartManager.cpp
+- docs/2026-09-22 - Uart_Esp32 - Commit-Nachricht - JSON-Status-Buildfix - v0.24.txt

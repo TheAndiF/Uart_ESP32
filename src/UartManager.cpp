@@ -1716,10 +1716,10 @@ String UartManager::fileUploadStatusJson() const {
   j += ",\"total_size\":" + String(_uploadTotalSize);
   j += ",\"accepted_bytes\":" + String(_uploadAcceptedBytes);
   j += ",\"block_size\":" + String((uint32_t)UPLOAD_BLOCK_SIZE);
-  j += ","errors":" + String(_uploadErrors);
-  j += ","retry_requested":" + String(_uploadRetryRequested ? "true" : "false");
-  j += ","chunk_retries":" + String(_uploadChunkRetries);
-  j += ","local_crc":" + String(_uploadLocalFinalCrc);
+  j += ",\"errors\":" + String(_uploadErrors);
+  j += ",\"retry_requested\":" + String(_uploadRetryRequested ? "true" : "false");
+  j += ",\"chunk_retries\":" + String(_uploadChunkRetries);
+  j += ",\"local_crc\":" + String(_uploadLocalFinalCrc);
   j += ",\"remote_crc\":" + String(_uploadRemoteFinalCrc);
   j += ",\"rate_bps\":" + String(rate, 1);
   j += "}";
