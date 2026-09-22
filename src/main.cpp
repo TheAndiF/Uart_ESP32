@@ -4,6 +4,8 @@
 #include <Preferences.h>
 #include <time.h>
 #include <esp_system.h>
+#include <mbedtls/base64.h>
+#include <new>
 
 #include "MqttManager.h"
 #include "DeepSleepManager.h"
@@ -13,7 +15,7 @@
 #include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
-static const char* FW_BUILD_VERSION = "v0.23";
+static const char* FW_BUILD_VERSION = "v0.24";
 static const char* TZ_CET_CEST = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 AsyncWebServer server(80);
@@ -122,7 +124,8 @@ static String uartNav() {
   h += "<a class='btn' href='/uart/console'>UART Konsole</a>";
   h += "<a class='btn' href='/uart/decoder'>UART Decoder</a>";
   h += "<a class='btn' href='/uart/probe'>UART Probe-Runner</a>";
-  h += "<a class='btn' href='/uart/image'>UART Image-Transfer</a>";
+  h += "<a class='btn' href='/uart/image'>UART Datei-Download</a>";
+  h += "<a class='btn' href='/uart/upload'>UART Datei-Upload</a>";
   return h;
 }
 
@@ -755,7 +758,7 @@ static String uartConsolePage() {
   h += "<fieldset><legend>Status</legend><p><b>UART:</b> <span id='con_running'>" + String(uartMonitor.isRunning()?"laeuft":"gestoppt") + "</span> &nbsp; <b>TX-Freigabe:</b> <span id='con_tx_enabled'>" + String(uartMonitor.txEnabled()?"ja":"nein") + "</span></p>";
   h += "<p><b>RX:</b> <span id='con_rx'>" + String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)) + "</span> Bytes &nbsp; <b>Konsolen-TX:</b> <span id='con_tx'>" + String(uartMonitor.consoleTxBytes()) + "</span> Bytes</p><p><b>TX-Belegung:</b> <span id='con_tx_owner'>" + htmlEscape(uartMonitor.txOwnerText()) + "</span></p>";
   h += "<p class='small'>Aktuell: UART" + String(uartMonitor.uartNumber()) + ", RX GPIO" + String(uartMonitor.rxPin()) + ", TX GPIO" + String(uartMonitor.txPin()) + ", " + String(uartMonitor.baud()) + " " + htmlEscape(uartMonitor.frame()) + ".</p></fieldset>";
-  h += "<fieldset id='img_rearm_box' style='display:none'><legend>Image-Transfer nach Unterbrechung</legend><p id='img_rearm_text'>Der Image-Transfer wurde unterbrochen. Stelle zuerst ueber diese Konsole den BX3-Shell-Zugriff wieder her.</p><button id='img_rearm_btn' type='button' onclick='confirmImageConsole()'>Konsolenzugriff hergestellt - Image-Neustart freigeben</button><p class='small' id='img_rearm_status'></p></fieldset>";
+  h += "<fieldset id='img_rearm_box' style='display:none'><legend>Datei-Download nach Unterbrechung</legend><p id='img_rearm_text'>Der Datei-Download wurde unterbrochen. Stelle zuerst ueber diese Konsole den BX3-Shell-Zugriff wieder her.</p><button id='img_rearm_btn' type='button' onclick='confirmImageConsole()'>Konsolenzugriff hergestellt - Download-Neustart freigeben</button><p class='small' id='img_rearm_status'></p></fieldset>";
 
   h += "<fieldset><legend>Terminal</legend><label>Anzeige</label><select id='display_mode'><option value='text' selected>Text</option><option value='hex'>HEX</option><option value='hexascii'>HEX + ASCII</option></select>";
   h += "<div class='inlinecheck'><input id='autoscroll' type='checkbox' checked><label for='autoscroll' style='margin:0;font-weight:normal'>Autoscroll bei neuen UART-Daten</label></div>";
@@ -792,7 +795,7 @@ async function sendLine(){const m=document.getElementById('input_mode').value;le
 async function sendEnter(){const e=endingHex()||'0D';await sendForm(e,'hex');input.focus();}
 async function sendControl(code){const key='ctrl:'+String(code);if(!beginConsoleSend('control',key))return;try{const r=await fetch('/uart/console/control',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:'code='+code});if(!r.ok)api.textContent='CONTROL FEHLER: '+await r.text();else api.textContent='Steuerzeichen gesendet: 1 Byte';}catch(e){api.textContent='CONTROL FEHLER: '+e;}finally{endConsoleSend();input.focus();}}
 async function clearConsole(){try{const r=await fetch('/uart/console/clear',{method:'POST'});const d=await r.json();bytes=[];truncNote=false;consoleSeq=Number(d.sequence)||0;render(true);api.textContent='Puffer geleert';}catch(e){api.textContent='LOESCHEN FEHLER: '+e;}}
-async function pollImageRecovery(){try{const r=await fetch('/uart/image/status',{cache:'no-store'}),d=await r.json();const box=document.getElementById('img_rearm_box'),st=document.getElementById('img_rearm_status'),btn=document.getElementById('img_rearm_btn');box.style.display=d.restart_required?'block':'none';if(d.restart_required){btn.disabled=!!d.console_confirmed;st.textContent=d.console_confirmed?'Konsolenzugriff bestaetigt. Zur Seite UART Image-Transfer wechseln und dort neu starten.':'Nach erfolgreichem Login/Shell-Zugriff diese Bestaetigung druecken.';}}catch(e){}}
+async function pollImageRecovery(){try{const r=await fetch('/uart/image/status',{cache:'no-store'}),d=await r.json();const box=document.getElementById('img_rearm_box'),st=document.getElementById('img_rearm_status'),btn=document.getElementById('img_rearm_btn');box.style.display=d.restart_required?'block':'none';if(d.restart_required){btn.disabled=!!d.console_confirmed;st.textContent=d.console_confirmed?'Konsolenzugriff bestaetigt. Zur Seite UART Datei-Download wechseln und dort neu starten.':'Nach erfolgreichem Login/Shell-Zugriff diese Bestaetigung druecken.';}}catch(e){}}
 async function confirmImageConsole(){try{const r=await fetch('/uart/image/console-confirm',{method:'POST'});const t=await r.text();document.getElementById('img_rearm_status').textContent=r.ok?'Bestaetigt. Image-Neustart ist jetzt freigegeben.':t;pollImageRecovery();}catch(e){document.getElementById('img_rearm_status').textContent='FEHLER: '+e;}}
 document.getElementById('display_mode').addEventListener('change',()=>render(true));autoscroll.addEventListener('change',()=>{try{localStorage.setItem('uartConsoleAutoscroll',autoscroll.checked?'1':'0');}catch(e){}if(autoscroll.checked&&!pauseDisplay.checked)terminal.scrollTop=terminal.scrollHeight;});pauseDisplay.addEventListener('change',()=>{try{localStorage.setItem('uartConsolePause',pauseDisplay.checked?'1':'0');}catch(e){}if(!pauseDisplay.checked)render(true);});document.getElementById('input_mode').addEventListener('change',e=>{const hex=e.target.value==='hex';document.getElementById('hide_input').disabled=hex;if(hex){input.type='text';input.placeholder='z. B. 48 65 6C 6C 6F 0D';}else{input.placeholder='Text / Benutzername / Shell-Befehl';}});document.getElementById('hide_input').addEventListener('change',e=>{if(document.getElementById('input_mode').value==='text')input.type=e.target.checked?'password':'text';});input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(e.repeat||e.isComposing)return;sendLine();}});setInterval(pollConsole,150);setInterval(pollImageRecovery,1000);pollConsole();pollImageRecovery();input.focus();
 </script>)rawliteral";
@@ -801,13 +804,13 @@ document.getElementById('display_mode').addEventListener('change',()=>render(tru
 }
 
 static String uartImageTransferPage() {
-  String h = pageHead("UART Image-Transfer");
-  h += "<h1>UART Image-Transfer</h1>";
-  h += "<p class='small'>Verifiziertes, blockweises Backup eines BX3-MTD-Devices oder einer vorbereiteten Snapshot-Datei ueber die serielle Shell. v0.23 trennt das Quellen-Eingabefeld vollstaendig vom Status-Polling, nutzt eine versionsgebundene Browser-Speicherung und setzt Snapshot-Dateien als Standardquelle; die v0.22-Sendeschutzlogik bleibt erhalten. CRC32 (POSIX cksum) prueft jeden Block; die Gesamt-SHA256-Pruefung bleibt erhalten.</p>";
+  String h = pageHead("UART Datei-Download");
+  h += "<h1>UART Datei-Download</h1>";
+  h += "<p class='small'>Verifiziertes, blockweises Backup eines BX3-MTD-Devices oder einer vorbereiteten Snapshot-Datei ueber die serielle Shell. v0.24 benennt diese Richtung eindeutig als Datei-Download; die bewaehrte v0.23-Transferlogik bleibt intern kompatibel. CRC32 (POSIX cksum) prueft jeden Block; die Gesamt-SHA256-Pruefung bleibt erhalten.</p>";
   h += "<div class='warn'><b>Wichtig:</b> Nur auf eigenen bzw. autorisierten Systemen verwenden. Waehrend des Transfers reserviert diese Funktion UART TX/RX; Konsole, Probe-Runner und Decoder-Senden sind gesperrt.</div>";
-  h += "<fieldset><legend>Quelle</legend><label>Quelle fuer den naechsten Transfer</label><input id='img_source' value='/tmp/mtd7.img.gz' maxlength='64' autocomplete='off' autocapitalize='off' spellcheck='false'><p class='small'>Aktueller Feldwert: <span class='mono' id='img_next_src'>/tmp/mtd7.img.gz</span></p><div class='row'><button id='src_snapshot' type='button'>Snapshot /tmp/mtd7.img.gz einsetzen</button><button id='src_live' type='button'>Live-MTD /dev/mtd7ro einsetzen</button><button id='src_clear' type='button'>Feld leeren</button></div><p class='small'>Erlaubt: /dev/mtdNro fuer Live-MTD oder Snapshot-Dateien /tmp/*.img, /tmp/*.img.gz, /var/tmp/*.img und /var/tmp/*.img.gz. Fuer stabile Backups vorher z. B. /tmp/mtd7.img.gz in der BX3-Konsole erzeugen. Der Statusbereich unten zeigt die zuletzt/laufend verwendete Quelle und ueberschreibt dieses Feld nicht.</p><label>Startblock</label><input id='img_start' type='number' min='0' value='0'><p class='small'>Startblock 0 erzeugt ein vollstaendiges Image und erlaubt die Gesamt-SHA256-Pruefung. Ein hoeherer Startblock erzeugt nur ein Teilimage.</p><button id='img_start_btn' type='button' onclick='startImage()'>Image-Transfer starten</button><button id='img_abort_btn' type='button' onclick='abortImage()'>Abbrechen</button></fieldset>";
-  h += "<fieldset id='img_restart_box' style='display:none'><legend>Neustart nach Unterbrechung</legend><p>Nach Abbruch oder nicht wiederherstellbarem Fehler wird der UART automatisch fuer die Konsole freigegeben. Ein neuer Image-Transfer bleibt gesperrt, bis du den BX3-Shell-Zugriff in der <a href='/uart/console'>UART Konsole</a> wiederhergestellt und dort bestaetigt hast.</p><p><b>Konsolenzugriff bestaetigt:</b> <span id='img_console_ok'>nein</span></p><button id='img_restart_btn' type='button' onclick='restartImage()' disabled>Transfer komplett neu starten (Block 0)</button><p class='small'>Der Neustart beginnt absichtlich bei Block 0, weil die Browserdaten eines unterbrochenen Vollimages nach einem Seitenwechsel nicht verlaesslich erhalten bleiben.</p></fieldset>";
-  h += "<fieldset><legend>Status</legend><p><b>Status:</b> <span id='img_status'>bereit</span></p><p><b>Quelle:</b> <span id='img_src'>-</span></p><p><b>Empfangsblock:</b> <span id='img_rxblock'>-</span> &nbsp; <b>Browserbereit:</b> <span id='img_readyblock'>-</span> &nbsp; <b>Letztes ACK:</b> <span id='img_acked'>-</span></p><p><b>Blockgroesse:</b> 32768 Byte &nbsp; <b>Empfangen:</b> <span id='img_bytes'>0</span> Byte</p><p><b>Fehler:</b> <span id='img_errors'>0</span> &nbsp; <b>Wiederholungen:</b> <span id='img_retries'>0</span> &nbsp; <b>Geschwindigkeit:</b> <span id='img_rate'>0</span> KiB/s</p><p class='small'>Fehlerarten: Timeout <span id='err_timeout'>0</span> | CRC32 <span id='err_crc'>0</span> | Gesamt-SHA <span id='err_sha'>0</span> | Base64 <span id='err_b64'>0</span> | Marker <span id='err_marker'>0</span> | Groesse <span id='err_size'>0</span> | Sonstige <span id='err_other'>0</span></p><p><b>BX3 SHA256:</b> <span class='mono' id='img_remote_sha'>-</span></p><p><b>ESP32 SHA256:</b> <span class='mono' id='img_local_sha'>-</span></p><progress id='img_progress' value='0' max='100' style='width:100%;height:24px'></progress><p id='img_note' class='small'>Warte auf Transferstart.</p><a class='btn' id='img_download' style='display:none' download='bx3-mtd7.img'>Image herunterladen</a></fieldset>";
+  h += "<fieldset><legend>Quelle</legend><label>Quelle fuer den naechsten Transfer</label><input id='img_source' value='/tmp/mtd7.img.gz' maxlength='64' autocomplete='off' autocapitalize='off' spellcheck='false'><p class='small'>Aktueller Feldwert: <span class='mono' id='img_next_src'>/tmp/mtd7.img.gz</span></p><div class='row'><button id='src_snapshot' type='button'>Snapshot /tmp/mtd7.img.gz einsetzen</button><button id='src_live' type='button'>Live-MTD /dev/mtd7ro einsetzen</button><button id='src_clear' type='button'>Feld leeren</button></div><p class='small'>Erlaubt: /dev/mtdNro fuer Live-MTD oder Snapshot-Dateien /tmp/*.img, /tmp/*.img.gz, /var/tmp/*.img und /var/tmp/*.img.gz. Fuer stabile Backups vorher z. B. /tmp/mtd7.img.gz in der BX3-Konsole erzeugen. Der Statusbereich unten zeigt die zuletzt/laufend verwendete Quelle und ueberschreibt dieses Feld nicht.</p><label>Startblock</label><input id='img_start' type='number' min='0' value='0'><p class='small'>Startblock 0 erzeugt ein vollstaendiges Image und erlaubt die Gesamt-SHA256-Pruefung. Ein hoeherer Startblock erzeugt nur ein Teilimage.</p><button id='img_start_btn' type='button' onclick='startImage()'>Datei-Download starten</button><button id='img_abort_btn' type='button' onclick='abortImage()'>Abbrechen</button></fieldset>";
+  h += "<fieldset id='img_restart_box' style='display:none'><legend>Neustart nach Unterbrechung</legend><p>Nach Abbruch oder nicht wiederherstellbarem Fehler wird der UART automatisch fuer die Konsole freigegeben. Ein neuer Datei-Download bleibt gesperrt, bis du den BX3-Shell-Zugriff in der <a href='/uart/console'>UART Konsole</a> wiederhergestellt und dort bestaetigt hast.</p><p><b>Konsolenzugriff bestaetigt:</b> <span id='img_console_ok'>nein</span></p><button id='img_restart_btn' type='button' onclick='restartImage()' disabled>Transfer komplett neu starten (Block 0)</button><p class='small'>Der Neustart beginnt absichtlich bei Block 0, weil die Browserdaten eines unterbrochenen Vollimages nach einem Seitenwechsel nicht verlaesslich erhalten bleiben.</p></fieldset>";
+  h += "<fieldset><legend>Status</legend><p><b>Status:</b> <span id='img_status'>bereit</span></p><p><b>Quelle:</b> <span id='img_src'>-</span></p><p><b>Empfangsblock:</b> <span id='img_rxblock'>-</span> &nbsp; <b>Browserbereit:</b> <span id='img_readyblock'>-</span> &nbsp; <b>Letztes ACK:</b> <span id='img_acked'>-</span></p><p><b>Blockgroesse:</b> 32768 Byte &nbsp; <b>Empfangen:</b> <span id='img_bytes'>0</span> Byte</p><p><b>Fehler:</b> <span id='img_errors'>0</span> &nbsp; <b>Wiederholungen:</b> <span id='img_retries'>0</span> &nbsp; <b>Geschwindigkeit:</b> <span id='img_rate'>0</span> KiB/s</p><p class='small'>Fehlerarten: Timeout <span id='err_timeout'>0</span> | CRC32 <span id='err_crc'>0</span> | Gesamt-SHA <span id='err_sha'>0</span> | Base64 <span id='err_b64'>0</span> | Marker <span id='err_marker'>0</span> | Groesse <span id='err_size'>0</span> | Sonstige <span id='err_other'>0</span></p><p><b>BX3 SHA256:</b> <span class='mono' id='img_remote_sha'>-</span></p><p><b>ESP32 SHA256:</b> <span class='mono' id='img_local_sha'>-</span></p><progress id='img_progress' value='0' max='100' style='width:100%;height:24px'></progress><p id='img_note' class='small'>Warte auf Transferstart.</p><a class='btn' id='img_download' style='display:none' download='bx3-mtd7.img'>Datei herunterladen</a></fieldset>";
   h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
   h += R"rawliteral(<script>
 let chunks=[],busy=false,pendingBlock=-1,pendingBytes=null,downloadUrl=null,startedAtBlock=0,lastStatus=null;
@@ -833,6 +836,31 @@ function downloadName(src){src=src||'/dev/mtd7ro';const m=src.match(/\/dev\/mtd(
 function makeDownload(d){if(downloadUrl||!d.done)return;const blob=new Blob(chunks,{type:'application/octet-stream'});downloadUrl=URL.createObjectURL(blob);const a=document.getElementById('img_download');a.href=downloadUrl;let name=downloadName(d.source);if(startedAtBlock!==0)name=name.replace(/(\.[^.]+(?:\.gz)?)?$/,'-from-block-'+startedAtBlock+'$1');a.download=name;a.style.display='block';document.getElementById('img_note').textContent=startedAtBlock===0?'Transfer beendet. Datei im Browser ist bereit.':'Teilimage ab Startblock ist bereit.';}
 async function pollImage(){try{const r=await fetch('/uart/image/status',{cache:'no-store'}),d=await r.json();lastStatus=d;document.getElementById('img_status').textContent=d.status;document.getElementById('img_src').textContent=d.source||'-';/* Eingabefeld nicht durch Status-Polling ueberschreiben. */document.getElementById('img_rxblock').textContent=d.total_blocks?d.current_block+' / '+d.total_blocks:'-';document.getElementById('img_readyblock').textContent=Number(d.ready_block)>=0?d.ready_block:'-';document.getElementById('img_acked').textContent=Number(d.last_acked_block)>=0?d.last_acked_block:'-';document.getElementById('img_bytes').textContent=d.accepted_bytes;document.getElementById('img_errors').textContent=d.errors;document.getElementById('img_retries').textContent=d.retries;document.getElementById('img_rate').textContent=(Number(d.rate_bps)/1024).toFixed(2);document.getElementById('err_timeout').textContent=d.error_timeout;document.getElementById('err_crc').textContent=d.error_crc;document.getElementById('err_sha').textContent=d.error_sha;document.getElementById('err_b64').textContent=d.error_base64;document.getElementById('err_marker').textContent=d.error_marker;document.getElementById('err_size').textContent=d.error_size;document.getElementById('err_other').textContent=d.error_other;document.getElementById('img_remote_sha').textContent=d.remote_sha256||'-';document.getElementById('img_local_sha').textContent=d.local_sha256||'-';const pct=d.total_size?Math.min(100,Number(d.accepted_bytes)*100/Number(d.total_size)):0;document.getElementById('img_progress').value=pct;document.getElementById('img_start_btn').disabled=d.active||d.restart_required;document.getElementById('img_abort_btn').disabled=!d.active;const rb=document.getElementById('img_restart_box');rb.style.display=d.restart_required?'block':'none';document.getElementById('img_console_ok').textContent=d.console_confirmed?'ja':'nein';document.getElementById('img_restart_btn').disabled=!d.restart_allowed;if(!d.active&&d.restart_required&&!d.console_confirmed)document.getElementById('img_note').textContent='Transfer unterbrochen. Bitte zuerst UART Konsole oeffnen, Shell-Zugriff wiederherstellen und dort bestaetigen.';if(d.block_ready||pendingBytes)await fetchReadyBlock(d);if(d.done)makeDownload(d);}catch(e){document.getElementById('img_status').textContent='FEHLER: '+e;}}
 setInterval(pollImage,400);pollImage();
+</script>)rawliteral";
+  h += "</div></body></html>";
+  return h;
+}
+
+static String uartFileUploadPage() {
+  String h = pageHead("UART Datei-Upload");
+  h += "<h1>UART Datei-Upload</h1>";
+  h += "<p class='small'>Beliebige lokale Dateien werden in 2048-Byte-Bloecken ueber den ESP32 und die BX3-Shell nach /tmp oder /var/tmp uebertragen. Jeder Block wird auf der BX3 mit POSIX cksum geprueft. Die Zieldatei entsteht zuerst als .part und wird erst nach erfolgreicher Gesamtpruefung umbenannt.</p>";
+  h += "<div class='warn'><b>UART exklusiv:</b> Waehrend des Uploads sind Konsole, Probe-Runner, Feld-5-Replay und Datei-Download gesperrt.</div>";
+  h += "<fieldset><legend>Datei und Ziel</legend><label>Lokale Datei</label><input id='up_file' type='file'><label>BX3-Ziel</label><input id='up_target' value='/tmp/bx3test/ptybridge' maxlength='120' autocomplete='off' autocapitalize='off' spellcheck='false'><label><input id='up_exec' type='checkbox' checked> Nach erfolgreicher Pruefung ausfuehrbar machen (chmod +x)</label><div class='row'><button id='up_start' type='button' onclick='startUpload()'>Upload starten</button><button id='up_abort' type='button' onclick='abortUpload()' disabled>Abbrechen</button></div><p class='small'>Erlaubt sind sichere Zielpfade unter /tmp/ oder /var/tmp/. Leerzeichen und Shell-Sonderzeichen sind absichtlich nicht erlaubt.</p></fieldset>";
+  h += "<fieldset><legend>Status</legend><p><b>Status:</b> <span id='up_status'>bereit</span></p><p><b>Ziel:</b> <span class='mono' id='up_target_status'>-</span></p><p><b>Datei:</b> <span id='up_name'>-</span></p><p><b>Fortschritt:</b> <span id='up_bytes'>0 / 0</span> Byte &nbsp; <b>Block:</b> <span id='up_block'>-</span></p><p><b>CRC lokal:</b> <span id='up_lcrc'>-</span> &nbsp; <b>CRC BX3:</b> <span id='up_rcrc'>-</span></p><p><b>Geschwindigkeit:</b> <span id='up_rate'>0</span> KiB/s</p><progress id='up_progress' value='0' max='100' style='width:100%;height:24px'></progress><p id='up_note' class='small'>Datei auswaehlen und Upload starten.</p></fieldset>";
+  h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
+  h += R"rawliteral(<script>
+const UP_BLOCK=2048;
+let uploadRunning=false,uploadFile=null,uploadOffset=0;
+async function upPost(url,body=''){return fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','Cache-Control':'no-store'},cache:'no-store',body});}
+function bytesToB64(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromCharCode(bytes[i]);return btoa(s);}
+async function getUpStatus(){const r=await fetch('/uart/upload/status',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());return r.json();}
+function renderUp(d){document.getElementById('up_status').textContent=d.status||'-';document.getElementById('up_target_status').textContent=d.target||'-';document.getElementById('up_bytes').textContent=d.accepted_bytes+' / '+d.total_size;document.getElementById('up_lcrc').textContent=Number(d.local_crc)?d.local_crc:'-';document.getElementById('up_rcrc').textContent=Number(d.remote_crc)?d.remote_crc:'-';document.getElementById('up_rate').textContent=(Number(d.rate_bps)/1024).toFixed(2);const pct=Number(d.total_size)?Math.min(100,Number(d.accepted_bytes)*100/Number(d.total_size)):0;document.getElementById('up_progress').value=pct;document.getElementById('up_abort').disabled=!d.active;document.getElementById('up_start').disabled=!!d.active||uploadRunning;document.getElementById('up_block').textContent=d.total_size?Math.min(Math.ceil(Number(d.accepted_bytes)/UP_BLOCK)+1,Math.ceil(Number(d.total_size)/UP_BLOCK))+' / '+Math.ceil(Number(d.total_size)/UP_BLOCK):'-';}
+async function waitFor(pred,timeoutMs=20000){const start=Date.now();for(;;){const d=await getUpStatus();renderUp(d);if(d.error)throw new Error(d.status||'Uploadfehler');if(pred(d))return d;if(Date.now()-start>timeoutMs)throw new Error('Timeout beim Warten auf BX3-Bestaetigung');await new Promise(r=>setTimeout(r,150));}}
+async function startUpload(){if(uploadRunning)return;const f=document.getElementById('up_file').files[0];const target=(document.getElementById('up_target').value||'').trim();if(!f){document.getElementById('up_note').textContent='Bitte zuerst eine Datei auswaehlen.';return;}if(!target){document.getElementById('up_note').textContent='BX3-Ziel fehlt.';return;}uploadRunning=true;uploadFile=f;uploadOffset=0;document.getElementById('up_name').textContent=f.name+' ('+f.size+' Byte)';document.getElementById('up_start').disabled=true;try{const exec=document.getElementById('up_exec').checked?'1':'0';let r=await upPost('/uart/upload/start','target='+encodeURIComponent(target)+'&size='+f.size+'&exec='+exec);if(!r.ok)throw new Error(await r.text());await waitFor(d=>d.phase==='ready');while(uploadOffset<f.size){const end=Math.min(uploadOffset+UP_BLOCK,f.size);const bytes=new Uint8Array(await f.slice(uploadOffset,end).arrayBuffer());const b64=bytesToB64(bytes);let sent=false;for(let attempt=0;attempt<6&&!sent;attempt++){r=await upPost('/uart/upload/chunk','offset='+uploadOffset+'&data='+encodeURIComponent(b64));if(!r.ok)throw new Error(await r.text());const expected=end;const d=await waitFor(d=>(Number(d.accepted_bytes)===expected&&d.phase==='ready')||(d.retry_requested&&Number(d.accepted_bytes)===uploadOffset));if(Number(d.accepted_bytes)===expected){sent=true;break;}document.getElementById('up_note').textContent='Blockpruefung fehlgeschlagen, sende Block erneut ('+(attempt+1)+'/5).';}if(!sent)throw new Error('Retry-Limit fuer Uploadblock erreicht');uploadOffset=end;document.getElementById('up_note').textContent='Block bestaetigt: '+uploadOffset+' / '+f.size+' Byte.';}r=await upPost('/uart/upload/finish');if(!r.ok)throw new Error(await r.text());const d=await waitFor(d=>d.done,30000);renderUp(d);document.getElementById('up_note').textContent='Upload erfolgreich verifiziert. Datei liegt auf der BX3 unter '+d.target+'.';}catch(e){document.getElementById('up_note').textContent='FEHLER: '+e;}finally{uploadRunning=false;try{renderUp(await getUpStatus());}catch(e){document.getElementById('up_start').disabled=false;}}}
+async function abortUpload(){try{await upPost('/uart/upload/abort');document.getElementById('up_note').textContent='Upload abgebrochen; .part-Datei wird entfernt.';}catch(e){document.getElementById('up_note').textContent='FEHLER: '+e;}}
+async function pollUpload(){try{const d=await getUpStatus();renderUp(d);}catch(e){document.getElementById('up_status').textContent='FEHLER: '+e;}}
+setInterval(pollUpload,500);pollUpload();
 </script>)rawliteral";
   h += "</div></body></html>";
   return h;
@@ -1030,6 +1058,48 @@ static void registerRoutes() {
     AsyncWebServerResponse* resp = r->beginResponse(200, "text/html; charset=utf-8", uartConsolePage());
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     r->send(resp);
+  });
+
+  // Browser -> BX3 file upload. The browser submits only one 2048-byte block
+  // at a time; the complete file is never buffered in ESP32 RAM.
+  server.on("/uart/upload/status", HTTP_GET, [](AsyncWebServerRequest* r){
+    AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
+  });
+  server.on("/uart/upload/start", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (!r->hasArg("target") || !r->hasArg("size")) { r->send(400, "text/plain; charset=utf-8", "target oder size fehlt"); return; }
+    const String target = r->arg("target");
+    const uint32_t size = (uint32_t)strtoul(r->arg("size").c_str(), nullptr, 10);
+    const bool executable = !r->hasArg("exec") || r->arg("exec") != "0";
+    if (!uartMonitor.startFileUpload(target, size, executable)) { r->send(409, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson()); return; }
+    r->send(200, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
+  });
+  server.on("/uart/upload/chunk", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (!r->hasArg("offset") || !r->hasArg("data")) { r->send(400, "text/plain; charset=utf-8", "offset oder data fehlt"); return; }
+    const uint32_t offset = (uint32_t)strtoul(r->arg("offset").c_str(), nullptr, 10);
+    const String encoded = r->arg("data");
+    const size_t cap = 2048U;
+    uint8_t* decoded = new (std::nothrow) uint8_t[cap];
+    if (!decoded) { r->send(500, "text/plain; charset=utf-8", "RAM fuer Uploadblock nicht verfuegbar"); return; }
+    size_t decodedLen = 0;
+    const int rc = mbedtls_base64_decode(decoded, cap, &decodedLen, (const unsigned char*)encoded.c_str(), encoded.length());
+    if (rc != 0 || decodedLen == 0U || decodedLen > cap) { delete[] decoded; r->send(400, "text/plain; charset=utf-8", "Base64-Uploadblock ungueltig"); return; }
+    const bool ok = uartMonitor.uploadFileChunk(decoded, decodedLen, offset);
+    delete[] decoded;
+    if (!ok) { r->send(409, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson()); return; }
+    r->send(202, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
+  });
+  server.on("/uart/upload/finish", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (!uartMonitor.finishFileUpload()) { r->send(409, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson()); return; }
+    r->send(202, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
+  });
+  server.on("/uart/upload/abort", HTTP_POST, [](AsyncWebServerRequest* r){
+    uartMonitor.abortFileUpload("vom Benutzer abgebrochen");
+    r->send(200, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
+  });
+  server.on("/uart/upload", HTTP_GET, [](AsyncWebServerRequest* r){
+    AsyncWebServerResponse* resp = r->beginResponse(200, "text/html; charset=utf-8", uartFileUploadPage());
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
   });
 
   // Image-transfer routes. The browser fetches one validated 32 KiB block at a

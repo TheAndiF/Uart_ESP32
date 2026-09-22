@@ -1,0 +1,11 @@
+feat(uart): add verified BX3 file upload and rename image UI to file download
+
+- rename the existing BX3-to-browser transfer in the web UI to UART Datei-Download
+- add Browser-to-BX3 UART Datei-Upload page and HTTP API
+- stream uploads in 2048-byte chunks instead of buffering complete files
+- verify every chunk with POSIX cksum and retry failed chunks up to five times
+- write to .part and move to the final target only after full size/CRC verification
+- optionally chmod +x after successful verification
+- restrict upload targets to safe /tmp and /var/tmp paths
+- extend UART TX ownership so upload, download, console, probe runner and replay cannot collide
+- bump firmware version to v0.24

@@ -1,3 +1,5 @@
+**Neu v0.24:** Die bisherige Webfunktion **UART Image-Transfer** heißt in der Oberfläche jetzt **UART Datei-Download** (BX3 -> Browser). Zusätzlich gibt es **UART Datei-Upload** (Browser -> BX3): lokale Dateien werden in 2048-Byte-Blöcken übertragen, jeder Block wird auf der BX3 mit POSIX `cksum` geprüft und bei Fehler bis zu fünfmal erneut gesendet. Geschrieben wird zunächst in `<ziel>.part`; erst nach vollständiger Größen- und CRC-Prüfung wird die Datei auf den endgültigen Zielnamen verschoben. Optional setzt die Firmware anschließend `chmod +x`. Zulässige Uploadziele liegen bewusst nur unter `/tmp/` oder `/var/tmp/`. Während Upload oder Download besitzt die jeweilige Funktion UART TX/RX exklusiv.
+
 # Uart_Esp32 - WROOM32 Infrastructure
 
 Reduzierte Firmware für einen klassischen **ESP32-WROOM-32 / NodeMCU-32S**.

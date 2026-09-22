@@ -146,11 +146,23 @@ public:
   String imageStatusJson() const;
   size_t imageReadBlock(uint32_t blockNumber, size_t offset, uint8_t* out, size_t maxLen) const;
 
+  // BX3 file upload. Browser chunks are kept small and are written to a .part
+  // file on the BX3. Every block is verified with POSIX cksum before it is
+  // appended; the final file is moved into place only after full verification.
+  bool startFileUpload(const String& target, uint32_t totalSize, bool executable = true);
+  bool uploadFileChunk(const uint8_t* data, size_t length, uint32_t offset);
+  bool finishFileUpload();
+  void abortFileUpload(const String& reason = "manuell abgebrochen");
+  bool fileUploadActive() const;
+  bool fileUploadReadyForChunk() const;
+  String fileUploadStatusJson() const;
+
 private:
   static constexpr size_t RAW_CAPACITY = 512;
   static constexpr size_t PACKET_CAPACITY = 128;
   static constexpr size_t CONSOLE_CAPACITY = 8192;
   static constexpr size_t IMAGE_BLOCK_SIZE = 32768;
+  static constexpr size_t UPLOAD_BLOCK_SIZE = 2048;
   static constexpr size_t UART_RX_BUFFER_SIZE = 16384;
   static constexpr size_t IMAGE_RX_DRAIN_BUDGET = 8192;
   static constexpr uint8_t IMAGE_MAX_RETRIES = 5;
@@ -309,6 +321,32 @@ private:
   bool _imageConsoleConfirmed = false;
   mbedtls_sha256_context _imageSha{};
 
+  enum class UploadState : uint8_t {
+    Idle = 0, WaitPrepare = 1, Ready = 2, WaitChunkAck = 3,
+    WaitFinal = 4, Done = 5, Error = 6
+  };
+  UploadState _uploadState = UploadState::Idle;
+  String _uploadTarget = "/tmp/bx3test/ptybridge";
+  String _uploadPart;
+  String _uploadBlockFile;
+  String _uploadStatus = "bereit";
+  String _uploadLine;
+  uint32_t _uploadTotalSize = 0;
+  uint32_t _uploadAcceptedBytes = 0;
+  uint32_t _uploadCurrentOffset = 0;
+  uint32_t _uploadPendingLength = 0;
+  uint32_t _uploadPendingCrc = 0;
+  uint8_t _uploadPendingData[UPLOAD_BLOCK_SIZE]{};
+  uint8_t _uploadChunkRetries = 0;
+  bool _uploadRetryRequested = false;
+  uint32_t _uploadLocalCrcState = 0;
+  uint32_t _uploadLocalFinalCrc = 0;
+  uint32_t _uploadRemoteFinalCrc = 0;
+  uint32_t _uploadErrors = 0;
+  unsigned long _uploadStartedMillis = 0;
+  unsigned long _uploadLastRxMillis = 0;
+  bool _uploadExecutable = true;
+
   uint32_t serialConfig() const;
   void pushRaw(uint8_t value);
   void pushConsole(uint8_t value);
@@ -335,6 +373,11 @@ private:
   void requestImageTotalSha();
   void finishImageSha();
   bool validateImageSource(const String& source, uint8_t& mtdNo, bool& fileSource) const;
+  void processUploadByte(uint8_t value);
+  void processUploadLine(String line);
+  bool validateUploadTarget(const String& target) const;
+  static void posixCksumFeed(uint32_t& crc, uint8_t byte);
+  static uint32_t posixCksumFinalize(uint32_t crc, size_t length);
   static uint32_t posixCksum(const uint8_t* data, size_t length);
   static String jsonEscape(const String& value);
 };

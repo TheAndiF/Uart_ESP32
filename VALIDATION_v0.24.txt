@@ -1,0 +1,28 @@
+Uart_Esp32 v0.24 - Validierung
+
+Geaendert:
+- Web-Bezeichnung UART Image-Transfer -> UART Datei-Download
+- Neuer UART Datei-Upload Browser -> ESP32 -> BX3
+- 2048-Byte Uploadbloecke
+- POSIX cksum CRC32 je Block
+- Bis zu 5 Wiederholungen eines fehlerhaften Blocks
+- .part-Datei bis zur erfolgreichen Gesamtpruefung
+- Gesamtgroesse + POSIX cksum vor mv auf Ziel
+- Optional chmod +x
+- Uploadziele nur unter /tmp/ oder /var/tmp/ und ohne Shell-Sonderzeichen
+- TX-Ownership um UART Datei-Upload erweitert
+
+Statische Pruefungen:
+- POSIX CRC-Implementierung gegen Linux cksum mit 1, 10, 2048 und 4097 Byte getestet: identisch.
+- Klammer-/Symbolpruefung der geaenderten Quelldateien durchgefuehrt.
+
+Build-Status in dieser Umgebung:
+- Kein neuer firmware.bin-Build erzeugt. PlatformIO/ESP32-Toolchain ist in der Ausfuehrungsumgebung nicht installiert und konnte wegen fehlendem Netzwerkzugriff nicht nachinstalliert werden.
+- Der im urspruenglichen ZIP enthaltene .pio/build-Ordner gehoert zu v0.23 und darf NICHT als v0.24-Firmware verwendet werden. Im v0.24-Ausgabe-ZIP wird dieser alte Build-Ordner deshalb entfernt.
+
+Empfohlener Build lokal:
+  pio run -e uart_esp32_ota
+oder in VS Code mit PlatformIO: Build.
+
+Erwartetes Ergebnis:
+  .pio/build/uart_esp32_ota/firmware.bin
