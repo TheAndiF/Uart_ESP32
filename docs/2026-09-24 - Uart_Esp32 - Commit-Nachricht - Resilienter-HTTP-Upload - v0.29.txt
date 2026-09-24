@@ -1,0 +1,19 @@
+BL_Add resilient HTTP upload retries
+Date: 2026-09-24
+
+Summary:
+- Added resilient Browser-to-ESP32 HTTP retry handling for UART file uploads.
+- Added upload-status reconciliation after interrupted HTTP requests so an already accepted or verified block is not appended twice.
+- Made upload block submission idempotent for already confirmed blocks and identical in-flight duplicate requests.
+- Added HTTP retry diagnostics to the upload web page.
+- Kept the v0.28 UART upload pacing unchanged: 4096-byte blocks, 512-byte UART segments, 45 ms segment pacing, 140 ms pre-verification delay and 5 s block verification timeout.
+- Preserved the saved local reference path and BX3 target path across the version update.
+
+Changed files:
+- src/main.cpp
+- src/UartManager.cpp
+- src/ConfigDefaults.h
+- docs/2026-09-24 - Uart_Esp32 - Commit-Nachricht - Resilienter-HTTP-Upload - v0.29.txt
+- docs/2026-09-24 - Uart_Esp32 - Projektdokumentation - Firmware - v0.29.docx
+- docs/2026-09-24 - Uart_Esp32 - Projektdokumentation - Firmware - v0.29.pdf
+- VALIDATION_v0.29.txt

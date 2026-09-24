@@ -1,0 +1,33 @@
+Uart_Esp32 v0.29 - Validation status
+Date: 2026-09-24
+Status: In Prüfung
+
+Implemented:
+- Browser HTTP retry handling for upload status/start/chunk/finish requests.
+- Safe reconciliation after ambiguous NetworkError events.
+- Idempotent duplicate handling for already confirmed upload blocks.
+- Deduplication of identical HTTP retries while a block is still under BX3 verification.
+- HTTP retry counter in the upload diagnostics.
+- Existing v0.28 UART pacing retained unchanged.
+
+Static checks performed:
+- Project root remains Uart_ESP32.
+- Firmware display version is v0.29.
+- UART_FW_VERSION is 0.29.0.
+- Modified C++ source brace counts are balanced.
+- Upload block size remains 4096 bytes.
+- UART upload segment size remains 512 bytes.
+- Segment pacing remains 45 ms.
+- Pre-verification delay remains 140 ms.
+- Block verification timeout remains 5000 ms.
+
+Build status:
+- PlatformIO is not installed in the execution environment, therefore no new firmware.bin was compiled here.
+- Any pre-existing .pio build artifacts in the full project package must not be treated as a v0.29 build.
+
+Recommended hardware test:
+1. Flash a locally compiled v0.29 firmware.
+2. Upload a 40-50 KiB test file to /tmp/bx3test/.
+3. During a transfer, briefly disturb the browser/WLAN connection if practical.
+4. Confirm that HTTP-Retries increases and the upload continues without duplicate data.
+5. Confirm final BX3 file size and cksum match the browser-side source transfer.

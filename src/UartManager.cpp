@@ -1574,12 +1574,34 @@ bool UartManager::startFileUpload(const String& target, uint32_t totalSize, bool
 }
 
 bool UartManager::uploadFileChunk(const uint8_t* data, size_t length, uint32_t offset) {
-  if (_uploadState != UploadState::Ready) { _uploadStatus = "noch nicht bereit fuer naechsten Block"; return false; }
   if (!data || length == 0U || length > UPLOAD_BLOCK_SIZE) { _uploadStatus = "Blockgroesse ungueltig"; return false; }
-  if (offset != _uploadAcceptedBytes) { _uploadStatus = "Offset stimmt nicht; erwartet " + String(_uploadAcceptedBytes); return false; }
   if ((uint64_t)offset + length > _uploadTotalSize) { _uploadStatus = "Block liegt hinter Dateiende"; return false; }
 
   const uint32_t crc = posixCksum(data, length);
+
+  // HTTP responses can be lost even after the ESP32 accepted a block. Make the
+  // chunk endpoint idempotent: an already-confirmed block is acknowledged again
+  // without appending it to the BX3 file a second time. Likewise, an identical
+  // request for the block currently under BX3 verification is accepted as an
+  // in-flight duplicate and does not start another UART transfer.
+  if (offset < _uploadAcceptedBytes) {
+    if ((uint64_t)offset + length <= _uploadAcceptedBytes) {
+      _uploadStatus = "Block bereits bestaetigt; HTTP-Wiederholung ohne erneutes Anhaengen";
+      return true;
+    }
+    _uploadStatus = "Wiederholungsblock ueberlappt den bestaetigten Bereich";
+    return false;
+  }
+  if (_uploadState == UploadState::WaitChunkAck && offset == _uploadCurrentOffset) {
+    if ((uint32_t)length == _uploadPendingLength && crc == _uploadPendingCrc) {
+      _uploadStatus = "Block wird bereits geprueft; HTTP-Wiederholung dedupliziert";
+      return true;
+    }
+    _uploadStatus = "Abweichende Wiederholung fuer aktuell geprueften Block";
+    return false;
+  }
+  if (_uploadState != UploadState::Ready) { _uploadStatus = "noch nicht bereit fuer naechsten Block"; return false; }
+  if (offset != _uploadAcceptedBytes) { _uploadStatus = "Offset stimmt nicht; erwartet " + String(_uploadAcceptedBytes); return false; }
   memcpy(_uploadPendingData, data, length);
   _uploadRetryRequested = false;
   _uploadCurrentOffset = offset;
@@ -1780,6 +1802,8 @@ String UartManager::fileUploadStatusJson() const {
   j += ",\"target\":\"" + jsonEscape(_uploadTarget) + "\"";
   j += ",\"total_size\":" + String(_uploadTotalSize);
   j += ",\"accepted_bytes\":" + String(_uploadAcceptedBytes);
+  j += ",\"current_offset\":" + String(_uploadCurrentOffset);
+  j += ",\"pending_length\":" + String(_uploadPendingLength);
   j += ",\"block_size\":" + String((uint32_t)UPLOAD_BLOCK_SIZE);
   j += ",\"uart_segment_size\":" + String((uint32_t)UPLOAD_UART_SEGMENT_SIZE);
   j += ",\"segment_index\":" + String((uint32_t)_uploadSegmentIndex);
