@@ -1,0 +1,27 @@
+Uart_Esp32 v0.28 validation
+Date: 2026-09-24
+Status: source-reviewed; not compiled in this environment
+
+Scope
+- File-upload-only pacing: 45 ms between 512-byte UART subsegments.
+- File-upload-only 140 ms delay before block wc/cksum verification.
+- WaitChunkAck timeout reduced to 5000 ms; existing automatic block retry remains active.
+- Console, decoder, probe runner, replay and download timing are unchanged.
+- Upload page persists the BX3 target path in browser localStorage.
+- Added optional local path/reference text field and drag-and-drop file selection.
+- Local path text is explicitly informational because browsers cannot open arbitrary local files from a pasted path.
+
+Static checks
+- FW_BUILD_VERSION is v0.28.
+- UPLOAD_BLOCK_SIZE remains 4096.
+- UPLOAD_UART_SEGMENT_SIZE remains 512.
+- UPLOAD_SEGMENT_PACING_MS is 45.
+- UPLOAD_PREVERIFY_DELAY_MS is 140.
+- UPLOAD_VERIFY_TIMEOUT_MS is 5000.
+- Per-segment ACKs were not reintroduced.
+- Block size/POSIX cksum verification and .part/final verification remain in place.
+- Target validation remains restricted to /tmp/ and /var/tmp/.
+
+Build note
+- PlatformIO is not installed in this execution environment. No v0.28 firmware.bin was built here.
+- Existing .pio artifacts in the full project package must not be treated as a v0.28 build.

@@ -178,8 +178,9 @@ void UartManager::loop() {
       (unsigned long)(millis() - _imageLastRxMillis) > 15000UL) {
     retryImageBlock("UART Timeout");
   }
+  const uint32_t uploadTimeoutMs = (_uploadState == UploadState::WaitChunkAck) ? UPLOAD_VERIFY_TIMEOUT_MS : 15000UL;
   if (fileUploadActive() && _uploadState != UploadState::Ready &&
-      (unsigned long)(millis() - _uploadLastRxMillis) > 15000UL) {
+      (unsigned long)(millis() - _uploadLastRxMillis) > uploadTimeoutMs) {
     String where = "UART Timeout";
     if (_uploadState == UploadState::WaitPrepare) where += " bei BX3-Vorbereitung";
     else if (_uploadState == UploadState::WaitChunkAck) where += " bei Blockpruefung ab Offset " + String(_uploadCurrentOffset);
@@ -1632,8 +1633,15 @@ bool UartManager::sendUploadSegment() {
 
     _uploadSegmentOffset += (uint32_t)segLen;
     ++_uploadSegmentIndex;
+
+    // Upload-only pacing: give the BX3 shell/base64 process time to drain its
+    // serial input without reintroducing a per-segment ACK roundtrip.
+    if (_uploadSegmentOffset < _uploadPendingLength) delay(UPLOAD_SEGMENT_PACING_MS);
   }
 
+  // Let the final decode/append command finish before asking wc/cksum to inspect
+  // the block. This affects only the exclusive file-upload path.
+  delay(UPLOAD_PREVERIFY_DELAY_MS);
   return sendUploadBlockVerify();
 }
 

@@ -1,0 +1,19 @@
+BL_Stabilize file upload pacing and path input
+Date: 2026-09-24
+
+Summary:
+- Added upload-only pacing between 512-byte UART subsegments to reduce BX3 shell/RX-buffer pressure.
+- Added a short upload-only settling delay before block size and POSIX cksum verification.
+- Reduced the block-verification timeout to 5 seconds while retaining automatic whole-block retry.
+- Kept 4096-byte logical blocks, 512-byte UART subsegments, no per-segment ACKs, block verification, .part handling and final verification.
+- Added a persistent BX3 upload target field, optional local path/reference field and drag-and-drop file selection.
+- Documented that browsers cannot read an arbitrary local file solely from a pasted path.
+- Kept console, decoder, probe runner, field-5 replay and file-download timing unchanged.
+
+Changed files:
+- README.md
+- src/main.cpp
+- src/UartManager.cpp
+- src/UartManager.h
+- VALIDATION_v0.28.txt
+- docs/2026-09-24 - Uart_Esp32 - Commit-Nachricht - Upload-Pacing-und-Pfadfeld - v0.28.txt

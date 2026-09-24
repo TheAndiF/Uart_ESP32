@@ -164,6 +164,9 @@ private:
   static constexpr size_t IMAGE_BLOCK_SIZE = 32768;
   static constexpr size_t UPLOAD_BLOCK_SIZE = 4096;
   static constexpr size_t UPLOAD_UART_SEGMENT_SIZE = 512;
+  static constexpr uint32_t UPLOAD_SEGMENT_PACING_MS = 45;
+  static constexpr uint32_t UPLOAD_PREVERIFY_DELAY_MS = 140;
+  static constexpr uint32_t UPLOAD_VERIFY_TIMEOUT_MS = 5000;
   static constexpr size_t UART_RX_BUFFER_SIZE = 16384;
   static constexpr size_t IMAGE_RX_DRAIN_BUDGET = 8192;
   static constexpr uint8_t IMAGE_MAX_RETRIES = 5;
