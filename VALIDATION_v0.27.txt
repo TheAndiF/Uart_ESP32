@@ -1,0 +1,27 @@
+Uart_ESP32 v0.27 validation
+Date: 2026-09-24
+Status: source-reviewed, not compiled in this environment
+
+Scope
+- UART console browser polling / duplicate display correction.
+- v0.26 upload-throughput changes retained unchanged.
+
+Findings
+- UART Decoder refresh replaces its raw-data snapshot once per completed /uart/status request and therefore does not append duplicate chunks.
+- UART Console previously used setInterval(pollConsole, 150) with an asynchronous fetch.
+- If a request lasted longer than 150 ms, multiple requests could use the same console sequence and append the same RX bytes more than once.
+
+Implemented
+- Removed fixed setInterval() for console RX polling.
+- Next console poll is scheduled only in finally after the previous request has completed.
+- Added consolePollActive guard so at most one console poll can be active.
+- Each request captures requestedSeq; a response is discarded if consoleSeq changed before the response is processed.
+- Added browser diagnostics: accepted RX bytes, poll count, stale-response count, active state.
+- TX handling and UART RX ring-buffer implementation are unchanged.
+
+Version
+- FW_BUILD_VERSION: v0.27
+- UART_FW_VERSION: 0.27.0
+
+Build
+- PlatformIO is not available in the execution environment; no new firmware.bin was built here.

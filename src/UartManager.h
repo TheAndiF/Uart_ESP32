@@ -162,7 +162,8 @@ private:
   static constexpr size_t PACKET_CAPACITY = 128;
   static constexpr size_t CONSOLE_CAPACITY = 8192;
   static constexpr size_t IMAGE_BLOCK_SIZE = 32768;
-  static constexpr size_t UPLOAD_BLOCK_SIZE = 2048;
+  static constexpr size_t UPLOAD_BLOCK_SIZE = 4096;
+  static constexpr size_t UPLOAD_UART_SEGMENT_SIZE = 512;
   static constexpr size_t UART_RX_BUFFER_SIZE = 16384;
   static constexpr size_t IMAGE_RX_DRAIN_BUDGET = 8192;
   static constexpr uint8_t IMAGE_MAX_RETRIES = 5;
@@ -337,6 +338,10 @@ private:
   uint32_t _uploadPendingLength = 0;
   uint32_t _uploadPendingCrc = 0;
   uint8_t _uploadPendingData[UPLOAD_BLOCK_SIZE]{};
+  uint32_t _uploadSegmentOffset = 0;
+  uint16_t _uploadSegmentIndex = 0;
+  uint16_t _uploadSegmentCount = 0;
+  uint16_t _uploadSegmentLength = 0;
   uint8_t _uploadChunkRetries = 0;
   bool _uploadRetryRequested = false;
   uint32_t _uploadLocalCrcState = 0;
@@ -374,6 +379,9 @@ private:
   void finishImageSha();
   bool validateImageSource(const String& source, uint8_t& mtdNo, bool& fileSource) const;
   void processUploadByte(uint8_t value);
+  bool sendUploadSegment();
+  bool sendUploadBlockVerify();
+  void requestUploadBlockRetry(const String& reason);
   void processUploadLine(String line);
   bool validateUploadTarget(const String& target) const;
   static void posixCksumFeed(uint32_t& crc, uint8_t byte);

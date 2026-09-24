@@ -180,7 +180,12 @@ void UartManager::loop() {
   }
   if (fileUploadActive() && _uploadState != UploadState::Ready &&
       (unsigned long)(millis() - _uploadLastRxMillis) > 15000UL) {
-    abortFileUpload("UART Timeout");
+    String where = "UART Timeout";
+    if (_uploadState == UploadState::WaitPrepare) where += " bei BX3-Vorbereitung";
+    else if (_uploadState == UploadState::WaitChunkAck) where += " bei Blockpruefung ab Offset " + String(_uploadCurrentOffset);
+    else if (_uploadState == UploadState::WaitFinal) where += " bei Abschlusspruefung";
+    if (_uploadState == UploadState::WaitChunkAck) requestUploadBlockRetry(where);
+    else abortFileUpload(where);
   }
   if (!imageActive() && !fileUploadActive()) {
     serviceTxReplay();
@@ -1496,7 +1501,7 @@ void UartManager::finishImageSha() {
 }
 
 bool UartManager::validateUploadTarget(const String& target) const {
-  if (target.length() < 6U || target.length() > 120U) return false;
+  if (target.length() < 6U || target.length() > 80U) return false;
   if (!(target.startsWith("/tmp/") || target.startsWith("/var/tmp/"))) return false;
   if (target.endsWith("/") || target.indexOf("..") >= 0) return false;
   for (size_t i = 0; i < target.length(); ++i) {
@@ -1535,6 +1540,10 @@ bool UartManager::startFileUpload(const String& target, uint32_t totalSize, bool
   _uploadCurrentOffset = 0;
   _uploadPendingLength = 0;
   _uploadPendingCrc = 0;
+  _uploadSegmentOffset = 0;
+  _uploadSegmentIndex = 0;
+  _uploadSegmentCount = 0;
+  _uploadSegmentLength = 0;
   _uploadChunkRetries = 0;
   _uploadRetryRequested = false;
   _uploadLocalCrcState = 0;
@@ -1543,7 +1552,7 @@ bool UartManager::startFileUpload(const String& target, uint32_t totalSize, bool
   _uploadErrors = 0;
   _uploadExecutable = executable;
   _uploadLine = "";
-  _uploadLine.reserve(192);
+  _uploadLine.reserve(256);
   _uploadStartedMillis = millis();
   _uploadLastRxMillis = millis();
   clearConsole();
@@ -1554,9 +1563,10 @@ bool UartManager::startFileUpload(const String& target, uint32_t totalSize, bool
   const String dir = target.substring(0, slash);
   _uploadState = UploadState::WaitPrepare;
   _uploadStatus = "bereite BX3-Zieldatei vor";
-  String cmd = "\r\nmkdir -p " + dir + " && rm -f " + _uploadPart + " " + _uploadBlockFile +
-               " && : > " + _uploadPart +
-               " && if command -v base64 >/dev/null 2>&1 && command -v cksum >/dev/null 2>&1; then printf '\\n<<<BX3UP:READY>>>\\n'; else printf '\\n<<<BX3UP:ERROR:TOOLS>>>\\n'; fi\r";
+  String cmd = "\r\nif mkdir -p " + dir + " && rm -f " + _uploadPart + " " + _uploadBlockFile + " && : > " + _uploadPart + "; then ";
+  cmd += "if command -v base64 >/dev/null 2>&1 && command -v cksum >/dev/null 2>&1 && [ \"$(printf 'QQ==' | base64 -d 2>/dev/null)\" = \"A\" ]; ";
+  cmd += "then printf '\\n<<<BX3UP:READY>>>\\n'; else printf '\\n<<<BX3UP:ERROR:TOOLS_OR_BASE64_DECODER>>>\\n'; fi; ";
+  cmd += "else printf '\\n<<<BX3UP:ERROR:PREPARE_PATH_OR_WRITE>>>\\n'; fi\r";
   const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
   if (written != cmd.length()) { abortFileUpload("Vorbereitung konnte nicht vollstaendig gesendet werden"); return false; }
   return true;
@@ -1568,35 +1578,87 @@ bool UartManager::uploadFileChunk(const uint8_t* data, size_t length, uint32_t o
   if (offset != _uploadAcceptedBytes) { _uploadStatus = "Offset stimmt nicht; erwartet " + String(_uploadAcceptedBytes); return false; }
   if ((uint64_t)offset + length > _uploadTotalSize) { _uploadStatus = "Block liegt hinter Dateiende"; return false; }
 
-  size_t encodedLen = 0;
-  const size_t encodedCap = ((length + 2U) / 3U) * 4U + 1U;
-  char* encoded = new (std::nothrow) char[encodedCap];
-  if (!encoded) { _uploadStatus = "RAM fuer Base64-Block nicht verfuegbar"; return false; }
-  const int rc = mbedtls_base64_encode((unsigned char*)encoded, encodedCap, &encodedLen, data, length);
-  if (rc != 0) { delete[] encoded; _uploadStatus = "Base64-Kodierung fehlgeschlagen"; return false; }
-  encoded[encodedLen] = '\0';
-
   const uint32_t crc = posixCksum(data, length);
   memcpy(_uploadPendingData, data, length);
   _uploadRetryRequested = false;
   _uploadCurrentOffset = offset;
   _uploadPendingLength = (uint32_t)length;
   _uploadPendingCrc = crc;
+  _uploadSegmentOffset = 0;
+  _uploadSegmentIndex = 0;
+  _uploadSegmentCount = (uint16_t)((length + UPLOAD_UART_SEGMENT_SIZE - 1U) / UPLOAD_UART_SEGMENT_SIZE);
+  _uploadSegmentLength = 0;
+  _uploadStatus = "starte Block ab Offset " + String(offset) + " in " + String((uint32_t)_uploadSegmentCount) + " UART-Teilsegmenten";
+  return sendUploadSegment();
+}
+
+bool UartManager::sendUploadSegment() {
+  if (!_serial || !_running || _uploadSegmentOffset >= _uploadPendingLength) return false;
+
+  // Fast upload path: send all UART subsegments back-to-back. There is no
+  // per-segment wc/ACK roundtrip anymore; integrity is verified once for the
+  // complete logical block by sendUploadBlockVerify().
+  while (_uploadSegmentOffset < _uploadPendingLength) {
+    const size_t remain = (size_t)_uploadPendingLength - (size_t)_uploadSegmentOffset;
+    const size_t segLen = remain > UPLOAD_UART_SEGMENT_SIZE ? UPLOAD_UART_SEGMENT_SIZE : remain;
+    char encoded[((UPLOAD_UART_SEGMENT_SIZE + 2U) / 3U) * 4U + 1U];
+    size_t encodedLen = 0;
+    const int rc = mbedtls_base64_encode((unsigned char*)encoded, sizeof(encoded), &encodedLen,
+                                         _uploadPendingData + _uploadSegmentOffset, segLen);
+    if (rc != 0 || encodedLen + 1U > sizeof(encoded)) {
+      abortFileUpload("Base64-Kodierung eines UART-Teilsegments fehlgeschlagen");
+      return false;
+    }
+    encoded[encodedLen] = '\0';
+
+    _uploadSegmentLength = (uint16_t)segLen;
+    _uploadStatus = "sende UART-Teilsegment " + String((uint32_t)_uploadSegmentIndex + 1U) + "/" + String((uint32_t)_uploadSegmentCount) +
+                    " (" + String(segLen) + " Byte, Block-Offset " + String(_uploadCurrentOffset) + ", ohne Zwischen-ACK)";
+
+    String cmd;
+    cmd.reserve(encodedLen + 160U);
+    cmd = "printf '%s' '";
+    cmd += encoded;
+    cmd += "' | base64 -d ";
+    cmd += (_uploadSegmentOffset == 0U) ? "> " : ">> ";
+    cmd += _uploadBlockFile;
+    cmd += "\r";
+
+    const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+    if (written != cmd.length()) {
+      abortFileUpload("UART-Teilsegment konnte nicht vollstaendig gesendet werden");
+      return false;
+    }
+
+    _uploadSegmentOffset += (uint32_t)segLen;
+    ++_uploadSegmentIndex;
+  }
+
+  return sendUploadBlockVerify();
+}
+
+bool UartManager::sendUploadBlockVerify() {
   _uploadState = UploadState::WaitChunkAck;
-  _uploadStatus = "sende Block ab Offset " + String(offset);
+  _uploadStatus = "pruefe Uploadblock (" + String(_uploadPendingLength) + " Byte) auf BX3 (Offset " + String(_uploadCurrentOffset) + ")";
   _uploadLastRxMillis = millis();
-
-  String cmd;
-  cmd.reserve(encodedLen + 520U);
-  cmd = "printf '%s' '";
-  cmd += encoded;
-  cmd += "' | base64 -d > " + _uploadBlockFile + "; S=$(wc -c < " + _uploadBlockFile + "); C=$(cksum " + _uploadBlockFile + "); set -- $C; C=$1; ";
-  cmd += "if [ \"$S\" = \"" + String(length) + "\" ] && [ \"$C\" = \"" + String(crc) + "\" ]; then cat " + _uploadBlockFile + " >> " + _uploadPart + "; T=$(wc -c < " + _uploadPart + "); printf '\\n<<<BX3UP:CHUNK:" + String(offset) + ":" + String(length) + ":" + String(crc) + ":%s>>>\\n' \"$T\"; else printf '\\n<<<BX3UP:ERROR:CHUNK:%s:%s>>>\\n' \"$S\" \"$C\"; fi; rm -f " + _uploadBlockFile + "\r";
-  delete[] encoded;
-
+  String cmd = "S=$(wc -c < " + _uploadBlockFile + "); C=$(cksum " + _uploadBlockFile + "); set -- $C; C=$1; ";
+  cmd += "if [ \"$S\" = \"" + String(_uploadPendingLength) + "\" ] && [ \"$C\" = \"" + String(_uploadPendingCrc) + "\" ]; then cat " + _uploadBlockFile + " >> " + _uploadPart + "; T=$(wc -c < " + _uploadPart + "); printf '\\n<<<BX3UP:CHUNK:" + String(_uploadCurrentOffset) + ":" + String(_uploadPendingLength) + ":" + String(_uploadPendingCrc) + ":%s>>>\\n' \"$T\"; else printf '\\n<<<BX3UP:ERROR:CHUNK:%s:%s>>>\\n' \"$S\" \"$C\"; fi; rm -f " + _uploadBlockFile + "\r";
   const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
-  if (written != cmd.length()) { abortFileUpload("Block konnte nicht vollstaendig gesendet werden"); return false; }
+  if (written != cmd.length()) { abortFileUpload("Blockpruefung konnte nicht vollstaendig gesendet werden"); return false; }
   return true;
+}
+
+void UartManager::requestUploadBlockRetry(const String& reason) {
+  ++_uploadErrors;
+  ++_uploadChunkRetries;
+  if (_uploadChunkRetries > 5U) {
+    abortFileUpload(reason + "; Retry-Limit erreicht");
+    return;
+  }
+  _uploadRetryRequested = true;
+  _uploadState = UploadState::Ready;
+  _uploadStatus = reason + "; kompletter Block wird erneut gesendet (Retry " + String(_uploadChunkRetries) + "/5)";
+  Serial.printf("[UPLOAD] Retry %u/5: %s\n", (unsigned)_uploadChunkRetries, reason.c_str());
 }
 
 bool UartManager::finishFileUpload() {
@@ -1638,8 +1700,8 @@ void UartManager::processUploadByte(uint8_t value) {
     if (line.length()) processUploadLine(line);
     return;
   }
-  if (_uploadLine.length() < 384U) _uploadLine += (char)value;
-  else abortFileUpload("BX3-Antwortzeile zu lang");
+  if (_uploadLine.length() < 1024U) _uploadLine += (char)value;
+  else { _uploadLine = ""; _uploadStatus = "lange BX3-Echozeile verworfen; warte auf Transfermarker"; }
 }
 
 void UartManager::processUploadLine(String line) {
@@ -1663,12 +1725,7 @@ void UartManager::processUploadLine(String line) {
       return;
     }
     if (line.startsWith("<<<BX3UP:ERROR:")) {
-      ++_uploadErrors;
-      ++_uploadChunkRetries;
-      if (_uploadChunkRetries > 5U) { abortFileUpload("BX3-Blockpruefung: Retry-Limit erreicht"); return; }
-      _uploadRetryRequested = true;
-      _uploadState = UploadState::Ready;
-      _uploadStatus = "Blockpruefung fehlgeschlagen; Block erneut senden (Retry " + String(_uploadChunkRetries) + "/5)";
+      requestUploadBlockRetry("BX3-Blockpruefung fehlgeschlagen: " + line);
       return;
     }
     return;
@@ -1699,7 +1756,7 @@ String UartManager::fileUploadStatusJson() const {
   switch (_uploadState) {
     case UploadState::WaitPrepare: phase = "prepare"; break;
     case UploadState::Ready: phase = "ready"; break;
-    case UploadState::WaitChunkAck: phase = "chunk"; break;
+    case UploadState::WaitChunkAck: phase = "chunk_verify"; break;
     case UploadState::WaitFinal: phase = "verify"; break;
     case UploadState::Done: phase = "done"; break;
     case UploadState::Error: phase = "error"; break;
@@ -1716,6 +1773,12 @@ String UartManager::fileUploadStatusJson() const {
   j += ",\"total_size\":" + String(_uploadTotalSize);
   j += ",\"accepted_bytes\":" + String(_uploadAcceptedBytes);
   j += ",\"block_size\":" + String((uint32_t)UPLOAD_BLOCK_SIZE);
+  j += ",\"uart_segment_size\":" + String((uint32_t)UPLOAD_UART_SEGMENT_SIZE);
+  j += ",\"segment_index\":" + String((uint32_t)_uploadSegmentIndex);
+  j += ",\"segment_count\":" + String((uint32_t)_uploadSegmentCount);
+  j += ",\"segment_offset\":" + String(_uploadSegmentOffset);
+  j += ",\"segment_length\":" + String((uint32_t)_uploadSegmentLength);
+  j += ",\"last_rx_age_ms\":" + String((uint32_t)(millis() - _uploadLastRxMillis));
   j += ",\"errors\":" + String(_uploadErrors);
   j += ",\"retry_requested\":" + String(_uploadRetryRequested ? "true" : "false");
   j += ",\"chunk_retries\":" + String(_uploadChunkRetries);

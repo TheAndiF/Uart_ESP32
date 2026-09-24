@@ -1,0 +1,24 @@
+Uart_ESP32 v0.26 - Upload-Durchsatz
+Datum: 2026-09-22
+
+Umgesetzt:
+1. UART-Teilsegment: 96 -> 512 Byte
+2. Keine Segment-ACKs / kein wc -c nach jedem Teilsegment
+3. Logischer Uploadblock: 2048 -> 4096 Byte
+
+Sicherheits-/Integritaetsverhalten beibehalten:
+- POSIX cksum je komplettem Uploadblock
+- Groessenpruefung je komplettem Uploadblock
+- kompletter Block-Retry bei fehlgeschlagener Blockpruefung
+- .part-Datei bis zur erfolgreichen Gesamtpruefung
+- finale Gesamtgroessen- und Gesamt-cksum-Pruefung
+
+Zusaetzliche notwendige Anpassung:
+- HTTP-/Base64-Decodierpuffer fuer /uart/upload/chunk von 2048 auf 4096 Byte vergroessert.
+- Browser UP_BLOCK auf 4096 Byte gesetzt.
+- Versionsanzeige auf v0.26 / UART_FW_VERSION 0.26.0 aktualisiert.
+
+Pruefung in dieser Umgebung:
+- Quellcode-/Konsistenzpruefung durchgefuehrt.
+- PlatformIO CLI ist in der Ausfuehrungsumgebung nicht installiert; daher wurde hier kein neuer firmware.bin-Build erzeugt.
+- Vorhandene .pio-Artefakte im Projekt stammen aus dem Eingangsprojekt und sind nicht als v0.26-Build zu betrachten.

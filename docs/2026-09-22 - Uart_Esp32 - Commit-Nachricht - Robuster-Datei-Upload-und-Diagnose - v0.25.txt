@@ -1,0 +1,21 @@
+BL_Robust UART file upload segmentation and diagnostics
+Date: 2026-09-22
+
+Summary:
+- Fixed the identified v0.24 upload timeout path caused by sending a complete 2048-byte block as one long Base64 shell command.
+- Kept 2048-byte logical upload blocks but split UART transport into 96-byte segments with per-segment BX3 acknowledgements.
+- Added full-block POSIX cksum verification before appending data to the .part file.
+- Added automatic full-block retry after segment timeout, segment write errors, or block verification errors, up to five retries.
+- Added explicit preparation errors for target path/write failures and missing or incompatible base64/cksum tools.
+- Added detailed upload diagnostics for phase, segment progress, RX silence, errors and retries in the web interface and JSON status.
+- Updated project documentation and validation notes for firmware v0.25.
+
+Changed files:
+- README.md
+- VALIDATION_v0.25.txt
+- src/UartManager.h
+- src/UartManager.cpp
+- src/main.cpp
+- docs/2026-09-22 - Uart_Esp32 - Commit-Nachricht - Robuster-Datei-Upload-und-Diagnose - v0.25.txt
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.25.docx
+- docs/2026-09-22 - Uart_Esp32 - Projektdokumentation - Firmware - v0.25.pdf

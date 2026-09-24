@@ -1,0 +1,40 @@
+UART_ESP32 v0.25 - Validation notes
+Date: 2026-09-22
+Status: Source-level validation completed; PlatformIO build and BX3 hardware test required.
+
+Reason for change
+- v0.24 could time out on the first upload block because a 2048-byte block expanded to roughly 2732 Base64 characters plus shell syntax in one UART shell line.
+- The BX3 then returned no expected CHUNK marker and the ESP32 aborted after 15 seconds of UART silence.
+
+v0.25 changes
+- Keep logical browser upload blocks at 2048 bytes.
+- Split each block into 96-byte UART shell segments.
+- Limit upload target paths to 80 characters so the generated segment command stays below roughly 512 characters even at the maximum accepted path length.
+- Wait for a BX3 SEG marker after every segment before sending the next segment.
+- Verify the completed logical block with POSIX cksum before appending it to the .part file.
+- Retry a full logical block up to five times after segment timeout, segment length error, or block verification error.
+- Report upload phase, segment index/count/offset/length, RX silence, errors and retries in /uart/upload/status and the web UI.
+- Preparation now distinguishes path/write failures from missing/incompatible base64 -d or cksum tools.
+- Long shell echo lines are discarded instead of aborting the transfer parser.
+
+Source checks performed in this environment
+- Reviewed state-machine transitions for prepare -> segment -> block verify -> ready -> final verify.
+- Checked that the first segment truncates .uploadblock and subsequent segments append to it.
+- Checked that only a verified block is appended to the .part target.
+- Checked that retrying a block overwrites the temporary block and does not duplicate accepted .part data.
+- Checked JSON status string escaping and added diagnostic fields.
+- Performed delimiter/string lexical checks on UartManager.cpp and UartManager.h.
+
+Not performed here
+- PlatformIO ESP32 compilation (toolchain not available in this environment).
+- Flash/OTA installation on the physical ESP32.
+- End-to-end upload to the actual BX3 shell.
+
+Recommended acceptance test
+1. Build with: pio run -e uart_esp32_ota
+2. Flash/OTA v0.25 and verify the firmware version on the main page.
+3. Upload a small text/binary file to /tmp/bx3test/test.bin.
+4. Confirm the UI advances through phase=segment and segment counters.
+5. Confirm final size and POSIX cksum match.
+6. Upload build/ptybridge to /tmp/bx3test/ptybridge with chmod +x enabled.
+7. If a fault occurs, record Status, Phase, UART-Teilsegment, UART RX-Stille, errors and retries from the upload page.
