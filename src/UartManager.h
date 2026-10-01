@@ -63,6 +63,15 @@ public:
   uint32_t consoleTxBytes() const { return _consoleTxBytes; }
   String consoleChunkJson(uint32_t sinceSequence) const;
 
+  // Optional BX3 shell keepalive. When enabled, the firmware sends a harmless
+  // `echo` command after 60 seconds without any UART RX or TX activity. The
+  // heartbeat only runs while normal console TX is free; exclusive transfers,
+  // probe traffic and decoder replay therefore suppress it automatically.
+  void setConsoleHeartbeatEnabled(bool value);
+  bool consoleHeartbeatEnabled() const { return _consoleHeartbeatEnabled; }
+  uint32_t consoleHeartbeatCount() const { return _consoleHeartbeatCount; }
+  uint32_t consoleHeartbeatIntervalSeconds() const { return CONSOLE_HEARTBEAT_INTERVAL_MS / 1000UL; }
+
   uint32_t packetCount() const { return _packetCount; }
   uint32_t validPacketCount() const { return _validPacketCount; }
   uint32_t invalidPacketCount() const { return _invalidPacketCount; }
@@ -161,6 +170,7 @@ private:
   static constexpr size_t RAW_CAPACITY = 512;
   static constexpr size_t PACKET_CAPACITY = 128;
   static constexpr size_t CONSOLE_CAPACITY = 8192;
+  static constexpr uint32_t CONSOLE_HEARTBEAT_INTERVAL_MS = 60000UL;
   static constexpr size_t IMAGE_BLOCK_SIZE = 32768;
   static constexpr size_t UPLOAD_BLOCK_SIZE = 4096;
   static constexpr size_t UPLOAD_UART_SEGMENT_SIZE = 512;
@@ -195,6 +205,9 @@ private:
   size_t _consoleCount = 0;
   uint32_t _consoleSequence = 0;
   uint32_t _consoleTxBytes = 0;
+  bool _consoleHeartbeatEnabled = false;
+  uint32_t _consoleHeartbeatCount = 0;
+  unsigned long _lastUartActivityMillis = 0;
 
   uint8_t _packet[PACKET_CAPACITY]{};
   size_t _packetPos = 0;
@@ -356,6 +369,8 @@ private:
   bool _uploadExecutable = true;
 
   uint32_t serialConfig() const;
+  size_t writeSerialTracked(const uint8_t* data, size_t length);
+  void serviceConsoleHeartbeat();
   void pushRaw(uint8_t value);
   void pushConsole(uint8_t value);
   void processDecoderByte(uint8_t value);

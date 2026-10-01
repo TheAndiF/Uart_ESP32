@@ -1,0 +1,22 @@
+BL_Add UART console heartbeat
+Date: 2026-10-01
+
+Summary:
+- Added an optional firmware-side UART console heartbeat controlled by a checkbox on /uart/console.
+- Used a fixed 60-second inactivity interval and send `echo` followed by CR when no UART RX or TX activity has occurred.
+- Reset the inactivity timer on both received UART data and all internal UART transmit paths through a centralized tracked write helper.
+- Suppressed heartbeat traffic automatically whenever console TX is unavailable, including file download, file upload, probe runner, decoder field-5 replay, stopped UART, locked TX, or invalid TX GPIO states.
+- Persisted the heartbeat enable state in NVS and synchronized the browser checkbox with the firmware status API.
+- Kept Autoscroll and the explicit display-pause function independent from the heartbeat.
+- Updated firmware metadata to v0.31 / 0.31.0 and documented the change.
+
+Changed files:
+- README.md
+- src/main.cpp
+- src/ConfigDefaults.h
+- src/UartManager.h
+- src/UartManager.cpp
+- docs/2026-10-01 - Uart_Esp32 - Commit-Nachricht - UART-Konsolen-Heartbeat - v0.31.txt
+- docs/2026-10-01 - Uart_Esp32 - Projektdokumentation - Firmware - v0.31.docx
+- docs/2026-10-01 - Uart_Esp32 - Projektdokumentation - Firmware - v0.31.pdf
+- VALIDATION_v0.31.txt

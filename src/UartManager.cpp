@@ -16,6 +16,7 @@ void UartManager::load() {
   const uint8_t legacyMode = prefHas(p, "mode") ? p.getUChar("mode", 0) : 0;
   _enabled = prefHas(p, "enabled") ? p.getBool("enabled", legacyMode != 0) : (legacyMode != 0);
   _txEnabled = prefHas(p, "tx_enabled") ? p.getBool("tx_enabled", false) : false;
+  _consoleHeartbeatEnabled = prefHas(p, "con_hb") ? p.getBool("con_hb", false) : false;
 
   _uartNumber = prefHas(p, "uartno") ? p.getUChar("uartno", 2) : 2;
   if (_uartNumber != 1 && _uartNumber != 2) _uartNumber = 2;
@@ -53,6 +54,7 @@ void UartManager::save() {
   p.begin("uartconf", false);
   p.putBool("enabled", _enabled);
   p.putBool("tx_enabled", _txEnabled);
+  p.putBool("con_hb", _consoleHeartbeatEnabled);
   // Keep a small compatibility marker for older firmware revisions. Raw mode
   // is the least surprising fallback because v0.15 no longer has modes.
   p.putUChar("mode", _enabled ? 1U : 0U);
@@ -114,6 +116,7 @@ bool UartManager::start() {
   const int activeTxPin = _txEnabled ? _txPin : -1;
   _serial->begin(_baud, serialConfig(), _rxPin, activeTxPin);
   _running = true;
+  _lastUartActivityMillis = millis();
   _status = "UART aktiv auf UART" + String(_uartNumber) + ", RX GPIO" + String(_rxPin);
   if (_txEnabled && _txPin >= 0) _status += ", TX GPIO" + String(_txPin) + " freigegeben";
   else if (_txPin >= 0) _status += ", TX GPIO" + String(_txPin) + " gesperrt";
@@ -154,10 +157,12 @@ void UartManager::loop() {
   // Image transfers are RX-heavy. Drain a much larger burst per loop while the
   // transfer owns UART; normal console/decoder operation keeps the old budget.
   size_t budget = (imageActive() || fileUploadActive()) ? IMAGE_RX_DRAIN_BUDGET : 512U;
+  bool sawRx = false;
   while (_serial->available() > 0 && budget-- > 0U) {
     const int value = _serial->read();
     if (value < 0) break;
     const uint8_t b = (uint8_t)value;
+    sawRx = true;
 
     // Normal operation fans RX out to console/raw/decoder. During image transfer
     // RX is owned by the image parser so base64 payload cannot pollute decoder
@@ -173,6 +178,7 @@ void UartManager::loop() {
     }
     ++_totalBytes;
   }
+  if (sawRx) _lastUartActivityMillis = millis();
 
   if (imageActive() && _imageState != ImageState::BlockReady &&
       (unsigned long)(millis() - _imageLastRxMillis) > 15000UL) {
@@ -191,6 +197,7 @@ void UartManager::loop() {
   if (!imageActive() && !fileUploadActive()) {
     serviceTxReplay();
     serviceProbe();
+    serviceConsoleHeartbeat();
   }
 }
 
@@ -268,11 +275,39 @@ bool UartManager::consoleTxReady() const {
   return baseTxReady() && !imageActive() && !fileUploadActive() && _probeState == ProbeState::Idle && !_txActive;
 }
 
+size_t UartManager::writeSerialTracked(const uint8_t* data, size_t length) {
+  if (!_serial || !data || !length) return 0;
+  const size_t written = _serial->write(data, length);
+  if (written) _lastUartActivityMillis = millis();
+  return written;
+}
+
 size_t UartManager::consoleWrite(const uint8_t* data, size_t length) {
   if (!consoleTxReady() || !data || !length) return 0;
-  const size_t written = _serial->write(data, length);
+  const size_t written = writeSerialTracked(data, length);
   _consoleTxBytes += (uint32_t)written;
   return written;
+}
+
+void UartManager::setConsoleHeartbeatEnabled(bool value) {
+  _consoleHeartbeatEnabled = value;
+  _lastUartActivityMillis = millis();
+  Preferences p;
+  p.begin("uartconf", false);
+  p.putBool("con_hb", _consoleHeartbeatEnabled);
+  p.end();
+}
+
+void UartManager::serviceConsoleHeartbeat() {
+  if (!_consoleHeartbeatEnabled || !consoleTxReady()) return;
+  const unsigned long now = millis();
+  if ((unsigned long)(now - _lastUartActivityMillis) < CONSOLE_HEARTBEAT_INTERVAL_MS) return;
+
+  static const uint8_t heartbeat[] = {'e','c','h','o','\r'};
+  if (consoleWrite(heartbeat, sizeof(heartbeat)) == sizeof(heartbeat)) {
+    ++_consoleHeartbeatCount;
+    Serial.printf("[UART-HEARTBEAT] echo gesendet (%lu)\n", (unsigned long)_consoleHeartbeatCount);
+  }
 }
 
 void UartManager::clearConsole() {
@@ -333,6 +368,9 @@ String UartManager::consoleChunkJson(uint32_t sinceSequence) const {
   j += ",\"truncated\":" + String(truncated ? "true" : "false");
   j += ",\"rx_bytes\":" + String((unsigned long)(_totalBytes & 0xFFFFFFFFULL));
   j += ",\"tx_bytes\":" + String(_consoleTxBytes);
+  j += ",\"heartbeat_enabled\":" + String(_consoleHeartbeatEnabled ? "true" : "false");
+  j += ",\"heartbeat_interval_s\":" + String(CONSOLE_HEARTBEAT_INTERVAL_MS / 1000UL);
+  j += ",\"heartbeat_count\":" + String(_consoleHeartbeatCount);
   j += ",\"text\":\"" + text + "\",\"hex\":\"" + hex + "\"}";
   return j;
 }
@@ -623,7 +661,7 @@ void UartManager::serviceTxReplay() {
   }
 
   if ((long)(now - _txNextMillis) >= 0) {
-    const size_t written = _serial->write(_txPacket, 25U);
+    const size_t written = writeSerialTracked(_txPacket, 25U);
     if (written != 25U) {
       _txActive = false;
       _txStatus = "Fehler: UART-TX konnte Paket nicht vollstaendig schreiben";
@@ -906,7 +944,7 @@ void UartManager::serviceProbe() {
   }
 
   if ((long)(now - _probeNextSendMillis) >= 0) {
-    const size_t written = _serial->write(_probeCandidate.frame, _probeCandidate.length);
+    const size_t written = writeSerialTracked(_probeCandidate.frame, _probeCandidate.length);
     if (written != _probeCandidate.length) {
       _probeState = ProbeState::Idle;
       _probeStatus = "TX-Fehler bei " + String(_probeCandidate.id);
@@ -1183,7 +1221,7 @@ bool UartManager::startImageTransfer(const String& source, uint32_t startBlock) 
     _imageStatus = "ermittle MTD-Groesse";
     cmd = "\r\nprintf '\n<<<BX3IMG:MTD_BEGIN>>>\n'; cat /proc/mtd | grep '^mtd" + String(mtdNo) + ":'; printf '<<<BX3IMG:MTD_END>>>\n'\r";
   }
-  _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+  writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
   _imageLastRxMillis = millis();
   Serial.printf("[IMAGE] Start %s ab Block %lu\n", _imageSource.c_str(), (unsigned long)_imageStartBlock);
   return true;
@@ -1192,7 +1230,7 @@ bool UartManager::startImageTransfer(const String& source, uint32_t startBlock) 
 void UartManager::abortImageTransfer(const String& reason) {
   if (_serial && _running && imageActive()) {
     const char* cleanup = "\r\nrm -f /tmp/bx3blk\r";
-    _serial->write((const uint8_t*)cleanup, strlen(cleanup));
+    writeSerialTracked((const uint8_t*)cleanup, strlen(cleanup));
   }
   if (_imageShaStarted) {
     mbedtls_sha256_free(&_imageSha);
@@ -1234,7 +1272,7 @@ bool UartManager::setupImageShellHelper() {
   cmd += "printf '<<<BX3IMG:END:%06d>>>\\n' \"$N\"; rm -f /tmp/bx3blk; }; ";
   cmd += "printf '\\n<<<BX3IMG:SETUP:OK>>>\\n'; ";
   cmd += "else printf '\\n<<<BX3IMG:SETUP:CKSUM_MISSING>>>\\n'; fi\r";
-  const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+  const size_t written = writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
   if (written != cmd.length()) return false;
   _imageState = ImageState::WaitSetup;
   _imageStatus = "initialisiere schnellen BX3-Blockhelfer (cksum/CRC32)";
@@ -1256,7 +1294,7 @@ bool UartManager::requestImageBlock() {
   // The shell helper was installed once at transfer start. This reduces UART
   // command traffic and shell parsing between blocks to a single short call.
   const String cmd = "bx3img_block " + String(_imageCurrentBlock) + "\r";
-  const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+  const size_t written = writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
   if (written != cmd.length()) {
     abortImageTransfer("Blockanforderung konnte nicht vollstaendig gesendet werden");
     return false;
@@ -1473,7 +1511,7 @@ void UartManager::requestImageTotalSha() {
   _imageState = ImageState::WaitTotalSha;
   _imageStatus = "warte auf Gesamt-SHA256 des BX3";
   String cmd = "H=$(sha256sum " + _imageSource + "); H=${H%% *}; printf '\\n<<<BX3IMG:TOTAL_SHA256:%s>>>\\n' \"$H\"\r";
-  _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+  writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
   _imageLastRxMillis = millis();
 }
 
@@ -1568,7 +1606,7 @@ bool UartManager::startFileUpload(const String& target, uint32_t totalSize, bool
   cmd += "if command -v base64 >/dev/null 2>&1 && command -v cksum >/dev/null 2>&1 && [ \"$(printf 'QQ==' | base64 -d 2>/dev/null)\" = \"A\" ]; ";
   cmd += "then printf '\\n<<<BX3UP:READY>>>\\n'; else printf '\\n<<<BX3UP:ERROR:TOOLS_OR_BASE64_DECODER>>>\\n'; fi; ";
   cmd += "else printf '\\n<<<BX3UP:ERROR:PREPARE_PATH_OR_WRITE>>>\\n'; fi\r";
-  const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+  const size_t written = writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
   if (written != cmd.length()) { abortFileUpload("Vorbereitung konnte nicht vollstaendig gesendet werden"); return false; }
   return true;
 }
@@ -1647,7 +1685,7 @@ bool UartManager::sendUploadSegment() {
     cmd += _uploadBlockFile;
     cmd += "\r";
 
-    const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+    const size_t written = writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
     if (written != cmd.length()) {
       abortFileUpload("UART-Teilsegment konnte nicht vollstaendig gesendet werden");
       return false;
@@ -1673,7 +1711,7 @@ bool UartManager::sendUploadBlockVerify() {
   _uploadLastRxMillis = millis();
   String cmd = "S=$(wc -c < " + _uploadBlockFile + "); C=$(cksum " + _uploadBlockFile + "); set -- $C; C=$1; ";
   cmd += "if [ \"$S\" = \"" + String(_uploadPendingLength) + "\" ] && [ \"$C\" = \"" + String(_uploadPendingCrc) + "\" ]; then cat " + _uploadBlockFile + " >> " + _uploadPart + "; T=$(wc -c < " + _uploadPart + "); printf '\\n<<<BX3UP:CHUNK:" + String(_uploadCurrentOffset) + ":" + String(_uploadPendingLength) + ":" + String(_uploadPendingCrc) + ":%s>>>\\n' \"$T\"; else printf '\\n<<<BX3UP:ERROR:CHUNK:%s:%s>>>\\n' \"$S\" \"$C\"; fi; rm -f " + _uploadBlockFile + "\r";
-  const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+  const size_t written = writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
   if (written != cmd.length()) { abortFileUpload("Blockpruefung konnte nicht vollstaendig gesendet werden"); return false; }
   return true;
 }
@@ -1703,7 +1741,7 @@ bool UartManager::finishFileUpload() {
   cmd += "if [ \"$S\" = \"" + String(_uploadTotalSize) + "\" ] && [ \"$C\" = \"" + String(_uploadLocalFinalCrc) + "\" ]; then mv -f " + _uploadPart + " " + _uploadTarget + "; ";
   if (_uploadExecutable) cmd += "chmod +x " + _uploadTarget + "; ";
   cmd += "printf '\\n<<<BX3UP:DONE:%s:%s>>>\\n' \"$S\" \"$C\"; else printf '\\n<<<BX3UP:ERROR:FINAL:%s:%s>>>\\n' \"$S\" \"$C\"; fi\r";
-  const size_t written = _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+  const size_t written = writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
   if (written != cmd.length()) { abortFileUpload("Abschlusspruefung konnte nicht vollstaendig gesendet werden"); return false; }
   return true;
 }
@@ -1715,7 +1753,7 @@ void UartManager::abortFileUpload(const String& reason) {
   _uploadStatus = reason;
   if (_serial && _running && wasActive && _uploadPart.length()) {
     String cmd = "\r\nrm -f " + _uploadBlockFile + " " + _uploadPart + "\r";
-    _serial->write((const uint8_t*)cmd.c_str(), cmd.length());
+    writeSerialTracked((const uint8_t*)cmd.c_str(), cmd.length());
   }
   Serial.printf("[UPLOAD] Abbruch: %s\n", reason.c_str());
 }
