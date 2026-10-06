@@ -15,7 +15,7 @@
 #include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
-static const char* FW_BUILD_VERSION = "v0.31";
+static const char* FW_BUILD_VERSION = "v0.33";
 static const char* TZ_CET_CEST = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 AsyncWebServer server(80);
@@ -34,6 +34,8 @@ bool mqttEnabled = false;
 String mqttHost, mqttUser, mqttPassword, mqttTopicBase, mqttClientId;
 uint16_t mqttPort = 1883;
 uint32_t heartbeatMs = 60000UL;
+bool powershellEnabled = false;
+String powershellToken;
 
 bool apActive = false;
 bool apOnlyRecovery = false;
@@ -94,6 +96,53 @@ static String wifiModeText() {
 static String htmlEscape(String s) {
   s.replace("&", "&amp;"); s.replace("<", "&lt;"); s.replace(">", "&gt;");
   s.replace("\"", "&quot;"); s.replace("'", "&#39;"); return s;
+}
+
+static String randomHexToken(size_t bytes = 24U) {
+  static const char* hex = "0123456789abcdef";
+  String out;
+  out.reserve(bytes * 2U);
+  for (size_t i = 0; i < bytes; ++i) {
+    const uint8_t value = (uint8_t)(esp_random() & 0xFFU);
+    out += hex[(value >> 4) & 0x0F];
+    out += hex[value & 0x0F];
+  }
+  return out;
+}
+
+static void savePowerShellSettings() {
+  Preferences p;
+  p.begin("netconf", false);
+  p.putBool("ps_enabled", powershellEnabled);
+  if (powershellToken.length()) p.putString("ps_token", powershellToken);
+  else p.remove("ps_token");
+  p.end();
+}
+
+static bool isPowerShellClient(AsyncWebServerRequest* r) {
+  if (!r->hasHeader("X-UartEsp32-Client")) return false;
+  const AsyncWebHeader* h = r->getHeader("X-UartEsp32-Client");
+  return h && h->value().equalsIgnoreCase("powershell");
+}
+
+static bool powerShellAuthorized(AsyncWebServerRequest* r) {
+  if (!powershellEnabled || !powershellToken.length()) return false;
+  if (!r->hasHeader("X-UartEsp32-Token")) return false;
+  const AsyncWebHeader* h = r->getHeader("X-UartEsp32-Token");
+  return h && h->value() == powershellToken;
+}
+
+static bool rejectUnauthorizedPowerShell(AsyncWebServerRequest* r) {
+  if (!isPowerShellClient(r)) return false;
+  if (!powershellEnabled) {
+    r->send(403, "text/plain; charset=utf-8", "PowerShell-Steuerung ist in der Weboberflaeche deaktiviert.");
+    return true;
+  }
+  if (!powerShellAuthorized(r)) {
+    r->send(401, "text/plain; charset=utf-8", "PowerShell-Handshake fehlt oder ist ungueltig. Kopplung in der Weboberflaeche zuruecksetzen und neu verbinden.");
+    return true;
+  }
+  return false;
 }
 
 static bool validIp(const String& text, IPAddress& out) {
@@ -194,6 +243,8 @@ static void loadSettings() {
   mqttTopicBase = prefString(p, "mqtt_topic", UART_MQTT_TOPIC_BASE);
   mqttClientId = prefString(p, "mqtt_client_id", UART_MQTT_CLIENT_ID);
   heartbeatMs = prefUInt(p, "mqtt_hb_ms", UART_MQTT_HEARTBEAT_MS);
+  powershellEnabled = prefBool(p, "ps_enabled", false);
+  powershellToken = prefString(p, "ps_token", "");
   p.end();
 
   if (hostname.length() == 0) hostname = UART_HOSTNAME;
@@ -825,7 +876,7 @@ static String uartImageTransferPage() {
   h += "<h1>UART Datei-Download</h1>";
   h += "<p class='small'>Verifiziertes, blockweises Backup eines BX3-MTD-Devices oder einer vorbereiteten Snapshot-Datei ueber die serielle Shell. v0.25 behaelt diese Richtung als Datei-Download; die bewaehrte v0.23-Transferlogik bleibt intern kompatibel. CRC32 (POSIX cksum) prueft jeden Block; die Gesamt-SHA256-Pruefung bleibt erhalten.</p>";
   h += "<div class='warn'><b>Wichtig:</b> Nur auf eigenen bzw. autorisierten Systemen verwenden. Waehrend des Transfers reserviert diese Funktion UART TX/RX; Konsole, Probe-Runner und Decoder-Senden sind gesperrt.</div>";
-  h += "<fieldset><legend>Quelle</legend><label>Quelle fuer den naechsten Transfer</label><input id='img_source' value='/tmp/mtd7.img.gz' maxlength='64' autocomplete='off' autocapitalize='off' spellcheck='false'><p class='small'>Aktueller Feldwert: <span class='mono' id='img_next_src'>/tmp/mtd7.img.gz</span></p><div class='row'><button id='src_snapshot' type='button'>Snapshot /tmp/mtd7.img.gz einsetzen</button><button id='src_live' type='button'>Live-MTD /dev/mtd7ro einsetzen</button><button id='src_clear' type='button'>Feld leeren</button></div><p class='small'>Erlaubt: /dev/mtdNro fuer Live-MTD oder Snapshot-Dateien /tmp/*.img, /tmp/*.img.gz, /var/tmp/*.img und /var/tmp/*.img.gz. Fuer stabile Backups vorher z. B. /tmp/mtd7.img.gz in der BX3-Konsole erzeugen. Der Statusbereich unten zeigt die zuletzt/laufend verwendete Quelle und ueberschreibt dieses Feld nicht.</p><label>Startblock</label><input id='img_start' type='number' min='0' value='0'><p class='small'>Startblock 0 erzeugt ein vollstaendiges Image und erlaubt die Gesamt-SHA256-Pruefung. Ein hoeherer Startblock erzeugt nur ein Teilimage.</p><button id='img_start_btn' type='button' onclick='startImage()'>Datei-Download starten</button><button id='img_abort_btn' type='button' onclick='abortImage()'>Abbrechen</button></fieldset>";
+  h += "<fieldset><legend>Quelle</legend><label>Quelle fuer den naechsten Transfer</label><input id='img_source' value='/tmp/mtd7.img.gz' maxlength='128' autocomplete='off' autocapitalize='off' spellcheck='false'><p class='small'>Aktueller Feldwert: <span class='mono' id='img_next_src'>/tmp/mtd7.img.gz</span></p><div class='row'><button id='src_snapshot' type='button'>Snapshot /tmp/mtd7.img.gz einsetzen</button><button id='src_live' type='button'>Live-MTD /dev/mtd7ro einsetzen</button><button id='src_clear' type='button'>Feld leeren</button></div><p class='small'>Erlaubt: /dev/mtdNro fuer Live-MTD oder beliebige sicher benannte Dateien unter /tmp/ oder /var/tmp/. Die Dateiendung ist nicht mehr eingeschraenkt. Leerzeichen und Shell-Sonderzeichen bleiben absichtlich nicht erlaubt. Fuer stabile Backups vorher z. B. /tmp/mtd7.img.gz in der BX3-Konsole erzeugen. Der Statusbereich unten zeigt die zuletzt/laufend verwendete Quelle und ueberschreibt dieses Feld nicht.</p><label>Startblock</label><input id='img_start' type='number' min='0' value='0'><p class='small'>Startblock 0 erzeugt ein vollstaendiges Image und erlaubt die Gesamt-SHA256-Pruefung. Ein hoeherer Startblock erzeugt nur ein Teilimage.</p><button id='img_start_btn' type='button' onclick='startImage()'>Datei-Download starten</button><button id='img_abort_btn' type='button' onclick='abortImage()'>Abbrechen</button></fieldset>";
   h += "<fieldset id='img_restart_box' style='display:none'><legend>Neustart nach Unterbrechung</legend><p>Nach Abbruch oder nicht wiederherstellbarem Fehler wird der UART automatisch fuer die Konsole freigegeben. Ein neuer Datei-Download bleibt gesperrt, bis du den BX3-Shell-Zugriff in der <a href='/uart/console'>UART Konsole</a> wiederhergestellt und dort bestaetigt hast.</p><p><b>Konsolenzugriff bestaetigt:</b> <span id='img_console_ok'>nein</span></p><button id='img_restart_btn' type='button' onclick='restartImage()' disabled>Transfer komplett neu starten (Block 0)</button><p class='small'>Der Neustart beginnt absichtlich bei Block 0, weil die Browserdaten eines unterbrochenen Vollimages nach einem Seitenwechsel nicht verlaesslich erhalten bleiben.</p></fieldset>";
   h += "<fieldset><legend>Status</legend><p><b>Status:</b> <span id='img_status'>bereit</span></p><p><b>Quelle:</b> <span id='img_src'>-</span></p><p><b>Empfangsblock:</b> <span id='img_rxblock'>-</span> &nbsp; <b>Browserbereit:</b> <span id='img_readyblock'>-</span> &nbsp; <b>Letztes ACK:</b> <span id='img_acked'>-</span></p><p><b>Blockgroesse:</b> 32768 Byte &nbsp; <b>Empfangen:</b> <span id='img_bytes'>0</span> Byte</p><p><b>Fehler:</b> <span id='img_errors'>0</span> &nbsp; <b>Wiederholungen:</b> <span id='img_retries'>0</span> &nbsp; <b>Geschwindigkeit:</b> <span id='img_rate'>0</span> KiB/s</p><p class='small'>Fehlerarten: Timeout <span id='err_timeout'>0</span> | CRC32 <span id='err_crc'>0</span> | Gesamt-SHA <span id='err_sha'>0</span> | Base64 <span id='err_b64'>0</span> | Marker <span id='err_marker'>0</span> | Groesse <span id='err_size'>0</span> | Sonstige <span id='err_other'>0</span></p><p><b>BX3 SHA256:</b> <span class='mono' id='img_remote_sha'>-</span></p><p><b>ESP32 SHA256:</b> <span class='mono' id='img_local_sha'>-</span></p><progress id='img_progress' value='0' max='100' style='width:100%;height:24px'></progress><p id='img_note' class='small'>Warte auf Transferstart.</p><a class='btn' id='img_download' style='display:none' download='bx3-mtd7.img'>Datei herunterladen</a></fieldset>";
   h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
@@ -944,6 +995,12 @@ static String uartSettingsPage() {
   const char* frames[] = {"8N1","8E1","8O1","8N2"};
   for (const char* f : frames) h += "<option value='" + String(f) + "'" + String(uartMonitor.frame()==f?" selected":"") + ">" + String(f) + "</option>";
   h += "</select><p class='small'>UART0 bleibt fuer Debug reserviert. GPIO6..11 sind Flash-Pins; GPIO1/3 bleiben fuer UART0 frei; GPIO34..39 sind nur Eingang. BX3-Arbeitswert aus dem Leitfaden: 115200/8N1. TTL-UART-Pegel vor Anschluss pruefen; VCC nicht verbinden.</p></fieldset><button type='submit'>UART-Einstellungen speichern / UART neu starten</button></form>";
+  h += "<form method='post' action='/save_powershell'><fieldset><legend>Windows PowerShell</legend>";
+  h += "<div class='inlinecheck'><input type='checkbox' name='ps_enable' value='1'" + String(powershellEnabled?" checked":"") + "><label style='margin:0'>PowerShell-Steuerung aktivieren</label></div>";
+  h += "<p class='small'>Nach dem Aktivieren kann genau ein Windows-Client einen einmaligen Handshake ausfuehren. Danach werden Konsole, Upload und Download mit dem lokal gespeicherten Kopplungstoken bedient.</p>";
+  h += "<p><b>Kopplungsstatus:</b> " + String(powershellToken.length()?"gekoppelt":"noch nicht gekoppelt") + "</p>";
+  h += "<button type='submit'>PowerShell-Einstellung speichern</button></fieldset></form>";
+  h += "<form method='post' action='/reset_powershell_pairing'><button type='submit'" + String(powershellToken.length()?"":" disabled") + ">PowerShell-Kopplung zuruecksetzen</button></form>";
   h += "<fieldset><legend>Laufzeit</legend><p><b>Status:</b> " + htmlEscape(uartMonitor.status()) + "</p><p><b>TX-Belegung:</b> " + htmlEscape(uartMonitor.txOwnerText()) + "</p><form method='post' action='/uart/start?return=settings'><button type='submit'" + String((uartMonitor.isRunning()||!uartMonitor.enabled())?" disabled":"") + ">UART START</button></form><form method='post' action='/uart/stop?return=settings'><button type='submit'" + String(!uartMonitor.isRunning()?" disabled":"") + ">UART STOP</button></form></fieldset>";
   h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a></div></body></html>";
   return h;
@@ -995,9 +1052,46 @@ static void registerRoutes() {
     r->send(200,"text/html; charset=utf-8",pageHead("WLAN geloescht")+"<h1>NVS-WLAN geloescht</h1><p>Neustart ...</p></div></body></html>");
     delay(500); ESP.restart();
   });
+  server.on("/save_powershell", HTTP_POST, [](AsyncWebServerRequest* r){
+    powershellEnabled = r->hasArg("ps_enable");
+    savePowerShellSettings();
+    r->redirect("/uart/settings");
+  });
+  server.on("/reset_powershell_pairing", HTTP_POST, [](AsyncWebServerRequest* r){
+    powershellToken = "";
+    savePowerShellSettings();
+    r->redirect("/uart/settings");
+  });
+  server.on("/uart/powershell/status", HTTP_GET, [](AsyncWebServerRequest* r){
+    String body = String("{\"enabled\":") + (powershellEnabled ? "true" : "false") +
+                  ",\"paired\":" + (powershellToken.length() ? "true" : "false") +
+                  ",\"device_id\":\"" + defaultIdentity() + "\"" +
+                  ",\"firmware\":\"" + FW_BUILD_VERSION + "\"}";
+    AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", body);
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    r->send(resp);
+  });
+  server.on("/uart/powershell/pair", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (!powershellEnabled) { r->send(403, "text/plain; charset=utf-8", "PowerShell-Steuerung ist deaktiviert."); return; }
+    if (powershellToken.length()) { r->send(409, "text/plain; charset=utf-8", "Dieses Geraet ist bereits gekoppelt. Kopplung zuerst in UART Einstellungen zuruecksetzen."); return; }
+    powershellToken = randomHexToken();
+    savePowerShellSettings();
+    String body = String("{\"paired\":true,\"device_id\":\"") + defaultIdentity() +
+                  "\",\"firmware\":\"" + FW_BUILD_VERSION + "\",\"token\":\"" + powershellToken + "\"}";
+    AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", body);
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    r->send(resp);
+  });
+  server.on("/uart/powershell/auth", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
+    if (!isPowerShellClient(r)) { r->send(400, "text/plain; charset=utf-8", "PowerShell-Client-Header fehlt."); return; }
+    r->send(200, "application/json; charset=utf-8", String("{\"authorized\":true,\"device_id\":\"") + defaultIdentity() + "\"}");
+  });
+
   // IMPORTANT: ESPAsyncWebServer 3.x may match a shorter path before a more specific
   // sub-route. Register all /uart/* routes before the /uart compatibility redirect.
   server.on("/uart/status", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.statusJson());
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     r->send(resp);
@@ -1017,6 +1111,7 @@ static void registerRoutes() {
 
   // Register specific console API routes before /uart/console.
   server.on("/uart/console/data", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     uint32_t since = 0;
     if (r->hasArg("since")) since = (uint32_t)strtoul(r->arg("since").c_str(), nullptr, 10);
     AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.consoleChunkJson(since));
@@ -1024,6 +1119,7 @@ static void registerRoutes() {
     r->send(resp);
   });
   server.on("/uart/console/send", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     if (!uartMonitor.consoleTxReady()) {
       r->send(409, "text/plain; charset=utf-8", "UART TX ist nicht bereit. TX-Freigabe, TX-GPIO, UART-Status und Probe-Runner pruefen.");
       return;
@@ -1070,6 +1166,7 @@ static void registerRoutes() {
     r->send(200, "text/plain; charset=utf-8", "OK");
   });
   server.on("/uart/console/control", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     if (!uartMonitor.consoleTxReady()) {
       r->send(409, "text/plain; charset=utf-8", "UART TX ist nicht bereit.");
       return;
@@ -1091,6 +1188,7 @@ static void registerRoutes() {
     r->send(200, "text/plain; charset=utf-8", "OK");
   });
   server.on("/uart/console/heartbeat", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     if (!r->hasArg("enabled")) {
       r->send(400, "text/plain; charset=utf-8", "Parameter enabled fehlt.");
       return;
@@ -1106,6 +1204,7 @@ static void registerRoutes() {
     r->send(resp);
   });
   server.on("/uart/console/clear", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     uartMonitor.clearConsole();
     AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", String("{\"sequence\":") + String(uartMonitor.consoleSequence()) + "}");
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -1120,10 +1219,12 @@ static void registerRoutes() {
   // Browser -> BX3 file upload. The browser submits only one 4096-byte block
   // at a time; the complete file is never buffered in ESP32 RAM.
   server.on("/uart/upload/status", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
   });
   server.on("/uart/upload/start", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     if (!r->hasArg("target") || !r->hasArg("size")) { r->send(400, "text/plain; charset=utf-8", "target oder size fehlt"); return; }
     const String target = r->arg("target");
     const uint32_t size = (uint32_t)strtoul(r->arg("size").c_str(), nullptr, 10);
@@ -1132,6 +1233,7 @@ static void registerRoutes() {
     r->send(200, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
   });
   server.on("/uart/upload/chunk", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     if (!r->hasArg("offset") || !r->hasArg("data")) { r->send(400, "text/plain; charset=utf-8", "offset oder data fehlt"); return; }
     const uint32_t offset = (uint32_t)strtoul(r->arg("offset").c_str(), nullptr, 10);
     const String encoded = r->arg("data");
@@ -1147,10 +1249,12 @@ static void registerRoutes() {
     r->send(202, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
   });
   server.on("/uart/upload/finish", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     if (!uartMonitor.finishFileUpload()) { r->send(409, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson()); return; }
     r->send(202, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
   });
   server.on("/uart/upload/abort", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     uartMonitor.abortFileUpload("vom Benutzer abgebrochen");
     r->send(200, "application/json; charset=utf-8", uartMonitor.fileUploadStatusJson());
   });
@@ -1162,10 +1266,12 @@ static void registerRoutes() {
   // Image-transfer routes. The browser fetches one validated 32 KiB block at a
   // time; the ESP32 never stores the complete image in RAM.
   server.on("/uart/image/status", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.imageStatusJson());
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
   });
   server.on("/uart/image/block", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     const uint32_t requested = r->hasArg("block") ? (uint32_t)strtoul(r->arg("block").c_str(), nullptr, 10) : 0xFFFFFFFFUL;
     if (!uartMonitor.imageBlockReady() || requested == 0xFFFFFFFFUL || requested != uartMonitor.imageReadyBlock()) {
       AsyncWebServerResponse* wait = r->beginResponse(202, "application/json; charset=utf-8", String("{\"ready\":false,\"requested\":") + String(requested) + ",\"ready_block\":" + String(uartMonitor.imageBlockReady() ? (long)uartMonitor.imageReadyBlock() : -1L) + "}");
@@ -1180,12 +1286,14 @@ static void registerRoutes() {
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
   });
   server.on("/uart/image/start", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     const String source = r->hasArg("source") ? r->arg("source") : String("/dev/mtd7ro");
     const uint32_t startBlock = r->hasArg("start") ? (uint32_t)strtoul(r->arg("start").c_str(), nullptr, 10) : 0U;
     if (!uartMonitor.startImageTransfer(source, startBlock)) { r->send(409, "text/plain; charset=utf-8", uartMonitor.imageStatusJson()); return; }
     r->send(200, "application/json; charset=utf-8", uartMonitor.imageStatusJson());
   });
   server.on("/uart/image/ack", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     if (!r->hasArg("block")) { r->send(400, "text/plain; charset=utf-8", "Blocknummer fehlt."); return; }
     const uint32_t block = (uint32_t)strtoul(r->arg("block").c_str(), nullptr, 10);
     if (!uartMonitor.imageAcknowledgeBlock(block)) { r->send(409, "text/plain; charset=utf-8", "ACK passt nicht zum browserbereiten Block."); return; }
@@ -1201,7 +1309,8 @@ static void registerRoutes() {
     if (!uartMonitor.startImageTransfer(source, 0U)) { r->send(409, "text/plain; charset=utf-8", uartMonitor.imageStatusJson()); return; }
     r->send(200, "application/json; charset=utf-8", uartMonitor.imageStatusJson());
   });
-  server.on("/uart/image/abort", HTTP_POST, [](AsyncWebServerRequest* r){ uartMonitor.abortImageTransfer("vom Benutzer abgebrochen"); r->send(200, "text/plain; charset=utf-8", "OK"); });
+  server.on("/uart/image/abort", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return; uartMonitor.abortImageTransfer("vom Benutzer abgebrochen"); r->send(200, "text/plain; charset=utf-8", "OK"); });
   server.on("/uart/image", HTTP_GET, [](AsyncWebServerRequest* r){
     AsyncWebServerResponse* resp = r->beginResponse(200, "text/html; charset=utf-8", uartImageTransferPage());
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
@@ -1230,6 +1339,7 @@ static void registerRoutes() {
   });
 
   server.on("/uart/start", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     const String ret = r->hasArg("return") ? r->arg("return") : String("settings");
     const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "probe" ? "/uart/probe" : ret == "image" ? "/uart/image" : "/uart/settings";
     if (!uartMonitor.start()) {
@@ -1239,6 +1349,7 @@ static void registerRoutes() {
     r->redirect(target);
   });
   server.on("/uart/stop", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
     const String ret = r->hasArg("return") ? r->arg("return") : String("settings");
     const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "probe" ? "/uart/probe" : ret == "image" ? "/uart/image" : "/uart/settings";
     uartMonitor.stop();

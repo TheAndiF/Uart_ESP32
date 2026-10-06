@@ -1,0 +1,39 @@
+Uart_Esp32 v0.33 - Validation
+Date: 2026-10-05
+
+Scope
+- Web-toggle for Windows PowerShell control.
+- One-time pairing handshake with ESP32-side NVS token and local Windows token storage.
+- Interactive PowerShell UART terminal.
+- Interactive /upload and /download commands.
+- Authenticated non-interactive PowerShell actions retained.
+
+Static checks performed
+- Firmware version updated to v0.33.
+- PowerShell settings are persisted in NVS keys ps_enabled and ps_token.
+- Web UI exposes enable/disable and pairing-reset controls under UART Einstellungen.
+- Pairing routes provide status, first-pair operation and token validation.
+- Supported PowerShell API requests carry X-UartEsp32-Client and X-UartEsp32-Token headers.
+- Browser routes remain usable without PowerShell headers.
+- Upload/download functions continue to use the established block-transfer implementation.
+- Download filename-extension restriction remains removed from v0.32; safe path validation remains in UartManager.
+- Full package keeps the root folder name Uart_ESP32 unchanged.
+
+Environment limitations
+- PlatformIO/pio is not installed in the execution environment, so no ESP32 firmware build was run here.
+- Windows PowerShell/pwsh is not installed in the execution environment, so the script could not be executed against a Windows PowerShell host here.
+- No ESP32/BX3 hardware is connected, so UART, pairing, upload and download require final hardware verification.
+
+Recommended hardware acceptance test
+1. Flash/build v0.33 and open UART Einstellungen.
+2. Verify PowerShell connection fails while PowerShell-Steuerung is disabled.
+3. Enable PowerShell-Steuerung and save.
+4. Run: .\tools\UartEsp32.ps1 -Connect <ESP-IP>
+5. Verify the first connection performs one handshake and stores the local token.
+6. Close/reopen the client and verify no new handshake is required.
+7. Verify normal UART input, Enter, Ctrl+C, Ctrl+D, Tab and Esc.
+8. Run /upload with a file without a filename extension and verify size/checksum completion.
+9. Run /download for a /tmp or /var/tmp file with an arbitrary safe filename and verify local output.
+10. Disable PowerShell-Steuerung in the web UI and verify the v0.33 client is rejected.
+11. Re-enable it and verify the stored pairing remains valid.
+12. Reset pairing in the web UI and verify the old local token is rejected until the client pairs again.

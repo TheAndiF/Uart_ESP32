@@ -1,0 +1,20 @@
+BL_Add paired interactive PowerShell control
+Date: 2026-10-05
+
+Summary:
+- Added a web-configurable enable/disable switch for the supported Windows PowerShell control path.
+- Added a one-time pairing handshake with an ESP32-side persistent token and local Windows token storage.
+- Added an interactive PowerShell UART terminal with direct key forwarding and local slash commands.
+- Added /upload and /download commands inside the interactive PowerShell session while retaining scripted upload/download actions.
+- Added pairing reset in the UART settings page and documented the v0.33 workflow and validation limits.
+- Kept the existing project/root folder name Uart_ESP32 unchanged.
+
+Changed files:
+- README.md
+- src/main.cpp
+- tools/UartEsp32.ps1
+- VALIDATION_v0.33.txt
+- docs/2026-10-05 - Uart_Esp32 - Commit-Nachricht - Interaktive-PowerShell-Kopplung - v0.33.txt
+- docs/2026-10-05 - Uart_Esp32 - Projektdokumentation - Firmware - v0.33.md
+- docs/2026-10-05 - Uart_Esp32 - Projektdokumentation - Firmware - v0.33.docx
+- docs/2026-10-05 - Uart_Esp32 - Projektdokumentation - Firmware - v0.33.pdf

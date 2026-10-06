@@ -1,3 +1,36 @@
+**Neu v0.33:** Die Windows-PowerShell-Steuerung ist jetzt als bewusst aktivierbare Funktion in `UART Einstellungen` integriert. Nach dem Aktivieren fuehrt der erste Windows-PC einmalig einen Handshake mit dem ESP32 aus und speichert das Kopplungstoken lokal. Danach kann `tools/UartEsp32.ps1` eine interaktive UART-Konsole oeffnen; normale Tastatureingaben, Enter, Ctrl+C, Ctrl+D, Tab und Esc werden direkt an die BX3-UART-Shell weitergegeben. In derselben Sitzung stehen lokale Befehle wie `/upload`, `/download`, `/status`, `/heartbeat` und `/exit` zur Verfuegung. Die bisherigen nicht-interaktiven Aktionen bleiben fuer Automatisierung erhalten. Die Weboberflaeche kann die PowerShell-Funktion jederzeit deaktivieren oder die einmalige Kopplung zuruecksetzen.
+
+PowerShell-Schnellstart v0.33:
+
+```powershell
+# 1. In der Weboberflaeche unter UART Einstellungen:
+#    PowerShell-Steuerung aktivieren
+
+# 2. Erste Verbindung: fuehrt automatisch den einmaligen Handshake aus
+.\tools\UartEsp32.ps1 -Connect 192.168.4.1
+
+# 3. In der laufenden PowerShell-Konsole
+/upload "C:\Build\ptybridge" "/tmp/bx3test/ptybridge"
+/download "/tmp/mtd7.img" "C:\Backup\mtd7.img"
+/status
+/heartbeat on
+/exit
+```
+
+Hinweis: Ein BX3-Befehl, der selbst mit `/` beginnt, wird in der interaktiven Sitzung mit doppeltem Slash eingegeben. Beispiel: `//tmp/testprogramm` sendet `/tmp/testprogramm` an BX3.
+
+**Neu v0.32:** Die Dateiendungs-Beschraenkung beim UART Datei-Download wurde entfernt. Neben `/dev/mtdNro` koennen jetzt beliebige sicher benannte Dateien unter `/tmp/` oder `/var/tmp/` als Quelle verwendet werden, z. B. `/tmp/backup`, `/tmp/rootfs.bin`, `/tmp/archive.tar.gz` oder `/var/tmp/log.txt`. Die Pfad-Sicherheitsregeln bleiben bestehen: keine Leerzeichen, keine Shell-Sonderzeichen, kein `..`, kein Verzeichnis als Quelle. Der Browser-Datei-Upload akzeptierte bereits beliebige lokale Dateitypen; auch dort bleiben nur sichere BX3-Zielpfade unter `/tmp/` oder `/var/tmp/` erlaubt. Zusaetzlich liegt unter `tools/UartEsp32.ps1` ein PowerShell-Client fuer Status, Konsole, Heartbeat, Datei-Upload und Datei-Download per HTTP-API.
+
+PowerShell-Beispiele:
+
+```powershell
+$esp = "http://192.168.4.1"
+.\tools\UartEsp32.ps1 -Esp $esp -Action status
+.\tools\UartEsp32.ps1 -Esp $esp -Action console-send -Text "root" -LineEnding CR
+.\tools\UartEsp32.ps1 -Esp $esp -Action upload -LocalPath .\ptybridge -TargetPath /tmp/bx3test/ptybridge
+.\tools\UartEsp32.ps1 -Esp $esp -Action download -Source /tmp/archive.tar.gz -OutFile .\archive.tar.gz
+```
+
 **Neu v0.31:** Die UART-Konsole besitzt jetzt ein zusaetzliches Haekchenfeld **"Heartbeat aktivieren (echo alle 60 s bei UART-Inaktivitaet)"**. Ist es aktiv, sendet die Firmware nach 60 Sekunden ohne UART-RX oder -TX automatisch `echo` gefolgt von CR an die BX3-Shell. Jede normale UART-Aktivitaet setzt den 60-s-Zaehler zurueck. Der Heartbeat laeuft firmwareseitig und bleibt nach dem Aktivieren auch ohne geoeffnete Browserseite wirksam; der Zustand wird in den UART-Einstellungen im NVS gespeichert.
 
 Der Heartbeat benutzt exakt dieselbe TX-Freigabelogik wie die interaktive Konsole. Deshalb wird er nicht gesendet, solange Datei-Download, Datei-Upload, Probe-Runner oder Decoder-Feld-5-Replay den UART belegen, und auch nicht wenn UART/TX deaktiviert oder kein gueltiger TX-GPIO vorhanden ist. Die Optionen **Autoscroll** und **Anzeige pausieren** bleiben vollstaendig unabhaengig; insbesondere laeuft der Heartbeat auch bei pausierter Anzeige weiter.
