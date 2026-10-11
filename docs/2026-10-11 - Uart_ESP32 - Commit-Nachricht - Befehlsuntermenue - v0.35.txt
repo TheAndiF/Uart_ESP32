@@ -1,0 +1,19 @@
+BL_Move UART command presets to a dedicated submenu
+
+Date: 2026-10-11
+
+Summary:
+- Added a dedicated Saved Commands page to the UART navigation.
+- Removed preset controls from the live UART console.
+- Preserved all eight existing NVS slot keys and their stored names and multiline commands.
+- Added NVS readback verification and best-effort restoration on incomplete writes.
+- Added independent UART newline selection and UTF-8 safe chunked sending.
+- Tested JavaScript syntax and multiline transmission chunk generation.
+- Firmware compilation and physical ESP32/BX3 validation remain pending.
+
+Changed files:
+- src/main.cpp
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Befehlsuntermenue - v0.35.md
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Befehlsuntermenue - v0.35.pdf
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Befehlsuntermenue - v0.35.docx
+- docs/2026-10-11 - Uart_ESP32 - Commit-Nachricht - Befehlsuntermenue - v0.35.txt
