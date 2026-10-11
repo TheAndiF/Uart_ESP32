@@ -803,9 +803,25 @@ setInterval(updateUart,1000);updateUart();
   return h;
 }
 
-// Named UART command presets: eight stable slots, persisted in ESP32 NVS.
-static constexpr int UART_PRESET_SLOTS = 8;
-static String uartPresetKey(char kind, int slot) { return String(kind) + String(slot); }
+// One named UART command; name and multiline content are stored atomically in one NVS blob.
+static constexpr size_t UART_PRESET_MAX_NAME = 64;
+static constexpr size_t UART_PRESET_MAX_COMMAND = 1024;
+static constexpr size_t UART_PRESET_BLOB_MAX = 2 + UART_PRESET_MAX_NAME + UART_PRESET_MAX_COMMAND;
+static bool readUartPreset(Preferences& p, String& name, String& command) {
+  name = ""; command = "";
+  const size_t n = p.getBytesLength("single");
+  if (!n) return true;
+  if (n < 3 || n > UART_PRESET_BLOB_MAX) return false;
+  uint8_t buf[UART_PRESET_BLOB_MAX];
+  if (p.getBytes("single", buf, n) != n || buf[0] != 1 || buf[1] == 0 || buf[1] > UART_PRESET_MAX_NAME || n <= 2 + buf[1]) return false;
+  char nameBuf[UART_PRESET_MAX_NAME+1];
+  char commandBuf[UART_PRESET_MAX_COMMAND+1];
+  memcpy(nameBuf, buf+2, buf[1]); nameBuf[buf[1]] = 0;
+  const size_t commandLength = n-2-buf[1];
+  memcpy(commandBuf, buf+2+buf[1], commandLength); commandBuf[commandLength] = 0;
+  name = String(nameBuf); command = String(commandBuf);
+  return true;
+}
 static String jsonQuote(const String& input) {
   String out = "\"";
   for (size_t i = 0; i < input.length(); ++i) {
@@ -822,46 +838,41 @@ static String jsonQuote(const String& input) {
 static String uartPresetsJson() {
   Preferences p;
   if (!p.begin("uartcmd", true)) return "{\"error\":\"NVS unavailable\"}";
-  String result = "{\"slots\":[";
-  for (int i = 0; i < UART_PRESET_SLOTS; ++i) {
-    if (i) result += ',';
-    result += "{\"name\":" + jsonQuote(p.getString(uartPresetKey('n', i).c_str(), ""));
-    result += ",\"command\":" + jsonQuote(p.getString(uartPresetKey('c', i).c_str(), "")) + "}";
-  }
+  String name, command;
+  bool ok = readUartPreset(p, name, command);
   p.end();
-  return result + "]}";
+  if (!ok) return "{\"error\":\"Invalid NVS record\"}";
+  return "{\"name\":" + jsonQuote(name) + ",\"command\":" + jsonQuote(command) + "}";
 }
 
 static String uartPresetsPage() {
   String h = pageHead("Gespeicherte Befehle");
   h += "<h1>Gespeicherte Befehle</h1>";
-  h += "<p class='small'>Acht benannte UART-Kommandobloecke im ESP32-NVS. Namen und Befehle bleiben nach Neustarts erhalten. Beim Speichern werden Zeilenumbrueche unveraendert gespeichert; nur beim Senden wird der gewaehlte Zeilenabschluss angewendet.</p>";
-  h += "<fieldset><legend>Befehl bearbeiten</legend><label>Speicherplatz</label><select id='preset_slot'></select>";
+  h += "<p class='small'>Ein benannter UART-Kommandoblock im ESP32-NVS. Namen und Befehle bleiben nach Neustarts erhalten. Beim Speichern werden Zeilenumbrueche unveraendert gespeichert; nur beim Senden wird der gewaehlte Zeilenabschluss angewendet.</p>";
+  h += "<fieldset><legend>Befehl bearbeiten</legend>";
   h += "<label>Name (max. 64 UTF-8-Bytes)</label><input id='preset_name' autocomplete='off' maxlength='64' placeholder='z. B. BX3 Status'>";
   h += "<label>Befehl / mehrzeiliger Kommandoblock (max. 1024 UTF-8-Bytes)</label><textarea id='preset_command' spellcheck='false' placeholder='uname -a'></textarea>";
   h += "<p class='small'>Enter fuegt eine neue Zeile ein. Nur die Schaltflaeche Senden startet die UART-Uebertragung.</p>";
   h += "<label>Zeilenabschluss beim Senden</label><select id='line_ending'><option value='cr' selected>CR (0x0D)</option><option value='lf'>LF (0x0A)</option><option value='crlf'>CRLF</option><option value='none'>Keiner (Zeilenwechsel als LF)</option></select>";
-  h += "<button type='button' id='preset_save' onclick='savePreset()'>Im NVS speichern</button><button type='button' id='preset_send' onclick='sendPreset()'>Gespeicherten Befehl senden</button><button type='button' id='preset_delete' onclick='deletePreset()'>Speicherplatz loeschen</button><p id='preset_status' class='small' aria-live='polite'></p></fieldset>";
+  h += "<button type='button' id='preset_save' onclick='savePreset()'>Im NVS speichern</button><button type='button' id='preset_send' onclick='sendPreset()'>Gespeicherten Befehl senden</button><button type='button' id='preset_delete' onclick='deletePreset()'>Befehl loeschen</button><p id='preset_status' class='small' aria-live='polite'></p></fieldset>";
   h += "<p class='small'>Der Befehl wird nach dem Speichern zur Kontrolle erneut aus NVS gelesen. Nicht gespeicherte Aenderungen werden nicht gesendet. Es erfolgt kein automatischer Versand nach einem Neustart. UART-TX muss in UART Einstellungen freigegeben sein.</p>";
   h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
   h += R"rawliteral(<script>
-const selector=document.getElementById('preset_slot'),nameInput=document.getElementById('preset_name'),commandInput=document.getElementById('preset_command'),statusBox=document.getElementById('preset_status');
+const nameInput=document.getElementById('preset_name'),commandInput=document.getElementById('preset_command'),statusBox=document.getElementById('preset_status');
 const sendBtn=document.getElementById('preset_send'),saveBtn=document.getElementById('preset_save'),deleteBtn=document.getElementById('preset_delete');
-let slots=[],busy=false;
+let preset={name:'',command:''},busy=false;
 function utf8Length(s){return new TextEncoder().encode(s).length;}
 function message(s){statusBox.textContent=s;}
-function selected(){return Number(selector.value);}
-function displaySlot(){const p=slots[selected()]||{name:'',command:''};nameInput.value=p.name;commandInput.value=p.command;sendBtn.disabled=busy||!p.command;deleteBtn.disabled=busy||(!p.name&&!p.command);}
-function buttons(){selector.disabled=busy;nameInput.disabled=busy;commandInput.disabled=busy;saveBtn.disabled=busy;deleteBtn.disabled=busy||!(slots[selected()]&&(slots[selected()].name||slots[selected()].command));sendBtn.disabled=busy||!(slots[selected()]&&slots[selected()].command);}
-async function loadPresets(keep=selected()){const r=await fetch('/uart/console/presets',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());const d=await r.json();if(!Array.isArray(d.slots)||d.slots.length!==8)throw new Error(d.error||'Ungueltige NVS-Daten');slots=d.slots;selector.replaceChildren();slots.forEach((p,i)=>{const opt=document.createElement('option');opt.value=String(i);opt.textContent=(i+1)+': '+(p.name||'(frei)');selector.appendChild(opt);});selector.value=String(Number.isInteger(keep)&&keep>=0&&keep<8?keep:0);displaySlot();}
+function displaySlot(){nameInput.value=preset.name;commandInput.value=preset.command;buttons();}
+function buttons(){nameInput.disabled=busy;commandInput.disabled=busy;saveBtn.disabled=busy;deleteBtn.disabled=busy||(!preset.name&&!preset.command);sendBtn.disabled=busy||!preset.command;}
+async function loadPresets(){const r=await fetch('/uart/console/presets',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());const d=await r.json();if(typeof d.name!=='string'||typeof d.command!=='string')throw new Error(d.error||'Ungueltige NVS-Daten');preset=d;displaySlot();}
 async function post(url,data){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:new URLSearchParams(data)});if(!r.ok)throw new Error(await r.text());return r;}
-async function savePreset(){if(busy)return;const i=selected(),name=nameInput.value.trim(),command=commandInput.value;if(!name||!command){message('Name und Befehl sind erforderlich.');return;}if(utf8Length(name)>64||utf8Length(command)>1024){message('Maximal 64 Name-Bytes und 1024 Befehls-Bytes (UTF-8).');return;}busy=true;buttons();try{await post('/uart/console/presets',{slot:String(i),name,command});await loadPresets(i);if(slots[i].name!==name||slots[i].command!==command)throw new Error('NVS-Lesekontrolle fehlgeschlagen');message('Gespeichert und aus NVS unveraendert zurueckgelesen.');}catch(e){message('SPEICHERN FEHLER: '+e);}finally{busy=false;buttons();}}
-async function deletePreset(){if(busy)return;const i=selected();if(!confirm('Speicherplatz '+(i+1)+' dauerhaft loeschen?'))return;busy=true;buttons();try{await post('/uart/console/presets/delete',{slot:String(i)});await loadPresets(i);if(slots[i].name||slots[i].command)throw new Error('NVS-Eintrag nach Loeschen noch vorhanden');message('Speicherplatz geloescht und kontrolliert.');}catch(e){message('LOESCHEN FEHLER: '+e);}finally{busy=false;buttons();}}
+async function savePreset(){if(busy)return;const name=nameInput.value.trim(),command=commandInput.value;if(!name||!command){message('Name und Befehl sind erforderlich.');return;}if(utf8Length(name)>64||utf8Length(command)>1024){message('Maximal 64 Name-Bytes und 1024 Befehls-Bytes (UTF-8).');return;}busy=true;buttons();try{await post('/uart/console/presets',{name,command});await loadPresets();if(preset.name!==name||preset.command!==command)throw new Error('NVS-Lesekontrolle fehlgeschlagen');message('Gespeichert und aus NVS unveraendert zurueckgelesen.');}catch(e){message('SPEICHERN FEHLER: '+e);}finally{busy=false;buttons();}}
+async function deletePreset(){if(busy)return;if(!confirm('Gespeicherten Befehl dauerhaft loeschen?'))return;busy=true;buttons();try{await post('/uart/console/presets/delete',{});await loadPresets();if(preset.name||preset.command)throw new Error('NVS-Eintrag nach Loeschen noch vorhanden');message('Befehl geloescht und kontrolliert.');}catch(e){message('LOESCHEN FEHLER: '+e);}finally{busy=false;buttons();}}
 function splitUtf8(s,max){const chunks=[];let part='';for(const ch of s){if(part&&utf8Length(part+ch)>max){chunks.push(part);part='';}part+=ch;}if(part)chunks.push(part);return chunks;}
 function buildChunks(command){const raw=command.replace(/\r\n/g,'\n').replace(/\r/g,'\n'),mode=document.getElementById('line_ending').value,eol=mode==='cr'?'\r':mode==='crlf'?'\r\n':'\n';const lines=raw.split('\n');let chunks=[];lines.forEach((line,i)=>{const part=line+(i<lines.length-1?eol:(raw.endsWith('\n')?'':mode==='none'?'':eol));chunks.push(...splitUtf8(part,480));});return chunks;}
-async function sendPreset(){if(busy)return;const i=selected(),p=slots[i];if(!p||!p.command)return;if(nameInput.value.trim()!==p.name||commandInput.value!==p.command){message('Ungespeicherte Aenderungen: erst speichern oder Speicherplatz neu laden.');return;}const chunks=buildChunks(p.command);if(!chunks.length){message('Befehl ist leer.');return;}busy=true;buttons();let sent=0;try{for(let j=0;j<chunks.length;j++){await post('/uart/console/send',{format:'text',data:chunks[j]});sent+=utf8Length(chunks[j]);message('Sende Teil '+(j+1)+'/'+chunks.length+' ('+sent+' Bytes)');if(j+1<chunks.length)await new Promise(resolve=>setTimeout(resolve,90));}message('Gespeicherten Befehl '+p.name+' gesendet: '+sent+' Bytes.');}catch(e){message('UART SENDEN FEHLER nach '+sent+' Bytes: '+e);}finally{busy=false;buttons();}}
-selector.addEventListener('change',()=>{displaySlot();message('');});
-loadPresets(0).then(()=>message('NVS-Befehle geladen.')).catch(e=>{message('NVS LADEN FEHLER: '+e);sendBtn.disabled=true;});
+async function sendPreset(){if(busy)return;const p=preset;if(!p||!p.command)return;if(nameInput.value.trim()!==p.name||commandInput.value!==p.command){message('Ungespeicherte Aenderungen: erst speichern oder Speicherplatz neu laden.');return;}const chunks=buildChunks(p.command);if(!chunks.length){message('Befehl ist leer.');return;}busy=true;buttons();let sent=0;try{for(let j=0;j<chunks.length;j++){await post('/uart/console/send',{format:'text',data:chunks[j]});sent+=utf8Length(chunks[j]);message('Sende Teil '+(j+1)+'/'+chunks.length+' ('+sent+' Bytes)');if(j+1<chunks.length)await new Promise(resolve=>setTimeout(resolve,90));}message('Gespeicherten Befehl '+p.name+' gesendet: '+sent+' Bytes.');}catch(e){message('UART SENDEN FEHLER nach '+sent+' Bytes: '+e);}finally{busy=false;buttons();}}
+loadPresets().then(()=>message('NVS-Befehle geladen.')).catch(e=>{message('NVS LADEN FEHLER: '+e);sendBtn.disabled=true;});
 </script>)rawliteral";
   h += "</div></body></html>";
   return h;
@@ -1197,42 +1208,33 @@ static void registerRoutes() {
   });
   server.on("/uart/console/presets", HTTP_POST, [](AsyncWebServerRequest* r){
     if (rejectUnauthorizedPowerShell(r)) return;
-    if (!r->hasArg("slot") || !r->hasArg("name") || !r->hasArg("command")) { r->send(400, "text/plain", "slot, name und command erforderlich"); return; }
-    const String slotText = r->arg("slot");
-    if (slotText.length()!=1 || slotText[0]<'0' || slotText[0]>'7') { r->send(400, "text/plain", "Ungueltiger Speicherplatz"); return; }
-    const int slot = slotText.toInt();
+    if (!r->hasArg("name") || !r->hasArg("command")) { r->send(400, "text/plain", "name und command erforderlich"); return; }
     String name = r->arg("name"); name.trim();
     const String command = r->arg("command");
-    if (!name.length() || name.length()>64 || !command.length() || command.length()>1024 || name.indexOf('\n')>=0 || name.indexOf('\r')>=0 || command.indexOf('\0')>=0) {
+    if (!name.length() || name.length()>UART_PRESET_MAX_NAME || !command.length() || command.length()>UART_PRESET_MAX_COMMAND || name.indexOf('\n')>=0 || name.indexOf('\r')>=0 || name.indexOf('\0')>=0 || command.indexOf('\0')>=0) {
       r->send(400, "text/plain", "Name (1-64 Bytes) und Befehl (1-1024 Bytes) pruefen"); return;
     }
+    uint8_t blob[UART_PRESET_BLOB_MAX];
+    const size_t length=2+name.length()+command.length();
+    blob[0]=1; blob[1]=(uint8_t)name.length();
+    memcpy(blob+2,name.c_str(),name.length());
+    memcpy(blob+2+name.length(),command.c_str(),command.length());
     Preferences p;
-    if (!p.begin("uartcmd", false)) { r->send(500, "text/plain", "NVS nicht verfuegbar"); return; }
-    const String nk=uartPresetKey('n',slot),ck=uartPresetKey('c',slot);
-    const String oldName=p.getString(nk.c_str(),""),oldCommand=p.getString(ck.c_str(),"");
-    const bool okName=p.putString(nk.c_str(),name)==name.length();
-    const bool okCmd=okName && p.putString(ck.c_str(),command)==command.length();
-    const bool verified=okName && okCmd && p.getString(nk.c_str(),"")==name && p.getString(ck.c_str(),"")==command;
-    if (!verified) {
-      if (oldName.length()) p.putString(nk.c_str(),oldName); else p.remove(nk.c_str());
-      if (oldCommand.length()) p.putString(ck.c_str(),oldCommand); else p.remove(ck.c_str());
-    }
+    if (!p.begin("uartcmd",false)) { r->send(500,"text/plain","NVS nicht verfuegbar"); return; }
+    const bool written=p.putBytes("single",blob,length)==length;
+    String savedName,savedCommand;
+    const bool verified=written && readUartPreset(p,savedName,savedCommand) && savedName==name && savedCommand==command;
     p.end();
-    r->send(verified?200:500, "text/plain", verified?"OK":"NVS Schreib-/Lesefehler");
+    r->send(verified?200:500,"text/plain",verified?"OK":"NVS Schreib-/Lesefehler");
   });
   server.on("/uart/console/presets/delete", HTTP_POST, [](AsyncWebServerRequest* r){
     if (rejectUnauthorizedPowerShell(r)) return;
-    if (!r->hasArg("slot")) { r->send(400,"text/plain","slot fehlt"); return; }
-    const String st=r->arg("slot");
-    if (st.length()!=1 || st[0]<'0' || st[0]>'7') { r->send(400,"text/plain","Ungueltiger Speicherplatz"); return; }
-    const int slot=st.toInt();
     Preferences p;
     if (!p.begin("uartcmd",false)) { r->send(500,"text/plain","NVS nicht verfuegbar"); return; }
-    const String nk=uartPresetKey('n',slot),ck=uartPresetKey('c',slot);
-    const bool removedName=p.remove(nk.c_str()) || !p.isKey(nk.c_str());
-    const bool removedCommand=p.remove(ck.c_str()) || !p.isKey(ck.c_str());
+    const bool removed=p.remove("single") || !p.isKey("single");
+    const bool verified=removed && !p.isKey("single");
     p.end();
-    r->send(removedName&&removedCommand?200:500,"text/plain",removedName&&removedCommand?"OK":"NVS Loeschfehler");
+    r->send(verified?200:500,"text/plain",verified?"OK":"NVS Loeschfehler");
   });
   server.on("/uart/console/send", HTTP_POST, [](AsyncWebServerRequest* r){
     if (rejectUnauthorizedPowerShell(r)) return;

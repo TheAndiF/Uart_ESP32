@@ -1,0 +1,18 @@
+BL_Store a single named UART command in NVS
+
+Date: 2026-10-11
+
+Summary:
+- Replaced eight preset slots with one named, multiline UART command.
+- Persisted name and command together as one versioned NVS blob.
+- Verified stored data immediately after writing.
+- Kept the dedicated menu, UART send path and line-ending choices.
+- Do not migrate the legacy eight NVS slots.
+- Kept partition settings unchanged.
+
+Changed files:
+- src/main.cpp
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Einzelner-NVS-Befehl - v0.36.pdf
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Einzelner-NVS-Befehl - v0.36.docx
+- docs/2026-10-11 - Uart_ESP32 - Commit-Nachricht - Einzelner-NVS-Befehl - v0.36.txt
+- VALIDATION_v0.36.txt

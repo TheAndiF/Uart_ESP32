@@ -1,0 +1,9 @@
+Uart_ESP32 v0.36 - Validation
+Date: 2026-10-11
+Source: v0.35
+PASS: JavaScript syntax (node --check)
+PASS: single NVS putBytes/readback code review
+PASS: old slot UI removed from source
+NOT RUN: PlatformIO native firmware build
+NOT RUN: ESP32/OTA hardware test
+Note: No NVS migration; old keys remain unused.
