@@ -1,0 +1,16 @@
+BL_Add saved UART command send control to console
+
+Date: 2026-10-11
+
+Summary:
+- Added a saved-command send button to the live UART console.
+- Loaded the single named command from the existing NVS read endpoint.
+- Reused the established block-send routine and UART TX locking.
+- Kept command editing, saving and deletion in the separate submenu.
+- Preserved NVS schema and optional feature compile flags.
+
+Changed files:
+- src/main.cpp
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - NVS-Befehl-in-UART-Konsole - v0.40.pdf
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - NVS-Befehl-in-UART-Konsole - v0.40.docx
+- docs/2026-10-11 - Uart_ESP32 - Commit-Nachricht - NVS-Befehl-in-UART-Konsole - v0.40.txt
