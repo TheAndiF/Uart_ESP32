@@ -1,0 +1,5 @@
+v0.34 Validierung
+- Embedded JavaScript: node --check, alle fuenf Skripte OK.
+- Hardware-/PlatformIO-Compile: nicht ausgefuehrt (PlatformIO fehlt).
+- Funktionen: acht Slots, NVS namespace uartcmd, Name <=64 Bytes, Befehl <=1024 Bytes; UART-Konsole TX-Sperren bleiben bestehen.
+- Vor Livebetrieb ESP32 bauen und am BX3 testen.

@@ -15,7 +15,7 @@
 #include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
-static const char* FW_BUILD_VERSION = "v0.33";
+static const char* FW_BUILD_VERSION = "v0.34";
 static const char* TZ_CET_CEST = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 AsyncWebServer server(80);
@@ -802,6 +802,35 @@ setInterval(updateUart,1000);updateUart();
   return h;
 }
 
+// Named UART command presets: eight stable slots, persisted in ESP32 NVS.
+static constexpr int UART_PRESET_SLOTS = 8;
+static String uartPresetKey(char kind, int slot) { return String(kind) + String(slot); }
+static String jsonQuote(const String& input) {
+  String out = "\"";
+  for (size_t i = 0; i < input.length(); ++i) {
+    const uint8_t c = (uint8_t)input[i];
+    if (c == '"' || c == '\\') { out += '\\'; out += (char)c; }
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if (c == '\t') out += "\\t";
+    else if (c < 32) { char b[7]; snprintf(b, sizeof(b), "\\u%04x", (unsigned)c); out += b; }
+    else out += (char)c;
+  }
+  return out + "\"";
+}
+static String uartPresetsJson() {
+  Preferences p;
+  if (!p.begin("uartcmd", true)) return "{\"error\":\"NVS unavailable\"}";
+  String result = "{\"slots\":[";
+  for (int i = 0; i < UART_PRESET_SLOTS; ++i) {
+    if (i) result += ',';
+    result += "{\"name\":" + jsonQuote(p.getString(uartPresetKey('n', i).c_str(), ""));
+    result += ",\"command\":" + jsonQuote(p.getString(uartPresetKey('c', i).c_str(), "")) + "}";
+  }
+  p.end();
+  return result + "]}";
+}
+
 static String uartConsolePage() {
   String h = pageHead("UART Konsole");
   h += "<h1>UART Konsole</h1>";
@@ -827,11 +856,24 @@ static String uartConsolePage() {
   h += "<button id='send_btn' type='button' onclick='sendLine()'>Eingabe / Block senden (Strg+Enter)</button><button id='enter_btn' type='button' onclick='sendEnter()'>Nur Enter senden</button>";
   h += "<button id='ctrlc_btn' type='button' onclick='sendControl(3)'>Ctrl+C</button><button id='ctrld_btn' type='button' onclick='sendControl(4)'>Ctrl+D</button><button id='tab_btn' type='button' onclick='sendControl(9)'>TAB</button><button id='esc_btn' type='button' onclick='sendControl(27)'>ESC</button>";
   h += "<button type='button' onclick='clearConsole()'>Ansicht / UART-Konsolenpuffer leeren</button><p class='small' id='console_api'>warte ...</p></fieldset>";
+  h += "<fieldset><legend>Gespeicherte Befehle (NVS)</legend><p class='small'>Bis zu 8 benannte Befehle dauerhaft im ESP32 speichern. Beim Senden wird der gespeicherte Inhalt mit dem oben gewaehlten Zeilenabschluss ueber UART uebertragen. Kein automatisches Senden beim Neustart.</p>";
+  h += "<label>Speicherplatz</label><select id='preset_slot'></select><label>Name</label><input id='preset_name' maxlength='64' autocomplete='off' placeholder='z. B. BX3 Status'>";
+  h += "<label>Befehl / Kommandoblock</label><textarea id='preset_command' maxlength='1024' spellcheck='false' placeholder='z. B. uname -a'></textarea>";
+  h += "<button type='button' onclick='savePreset()'>Im NVS speichern</button><button type='button' onclick='sendPreset()' id='preset_send'>Gespeicherten Befehl senden</button><button type='button' onclick='deletePreset()'>Eintrag loeschen</button><p id='preset_status' class='small'></p></fieldset>";
   h += "<p class='small'><b>Puffer:</b> 8192 RX-Bytes, sequenzielle inkrementelle Abfrage mit 150 ms Pause nach jeder abgeschlossenen HTTP-Antwort. Es laeuft hoechstens eine Konsolenabfrage gleichzeitig; veraltete Antworten werden verworfen. Der Browser behaelt maximal 32768 RX-Bytes und schneidet aeltere Anzeige-Daten weiterhin still ab. Eine aktive Textmarkierung schuetzt die Anzeige nur kurz vor Neuzeichnen; spaetestens nach 2,5 s wird die Live-Anzeige wieder aufgenommen. Die manuelle Anzeige-Pause bleibt davon unabhaengig und kann unbegrenzt aktiv bleiben. Optional sendet der ESP32 nach 60 s ohne UART-RX oder -TX ein <code>echo</code> mit CR; Datei-Upload/-Download, Probe-Runner und Decoder-Replay sperren diesen Heartbeat automatisch. Bei sehr hohen kontinuierlichen Baudraten kann HTTP-Polling weiterhin Daten verlieren; Decoder und Rohpuffer auf dem ESP32 arbeiten davon unabhaengig. BX3-Arbeitswert laut Leitfaden: 115200/8N1.</p>";
   h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
   h += R"rawliteral(<script>
 let consoleSeq=0,bytes=[],truncNote=false;let consoleTxReady=false,consoleSending=false,lastSendAt=0,lastSendKey='';let consolePollActive=false,consolePollStopped=false,consolePollCount=0,consoleStalePolls=0,consoleBrowserRxBytes=0;let selectionHoldUntil=0,lastTerminalSelection='';const SEND_COOLDOWN_MS=850,BLOCK_CHUNK_BYTES=480,BLOCK_PACING_MS=90,SELECTION_HOLD_MS=2500;const terminal=document.getElementById('terminal'),input=document.getElementById('console_input'),secretInput=document.getElementById('console_secret_input'),api=document.getElementById('console_api'),autoscroll=document.getElementById('autoscroll'),pauseDisplay=document.getElementById('pause_display'),heartbeatToggle=document.getElementById('console_heartbeat'),hideInput=document.getElementById('hide_input');
 try{const saved=localStorage.getItem('uartConsoleAutoscroll');if(saved!==null)autoscroll.checked=saved==='1';const ps=localStorage.getItem('uartConsolePause');if(ps!==null)pauseDisplay.checked=ps==='1';}catch(e){}
+let presetSlots=[];
+const presetSelector=document.getElementById('preset_slot'),presetName=document.getElementById('preset_name'),presetCommand=document.getElementById('preset_command'),presetStatus=document.getElementById('preset_status');
+function showPresetSlot(){const i=Number(presetSelector.value),p=presetSlots[i]||{name:'',command:''};presetName.value=p.name;presetCommand.value=p.command;document.getElementById('preset_send').disabled=!p.command;}
+async function loadPresets(){try{const r=await fetch('/uart/console/presets',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());const d=await r.json();if(!Array.isArray(d.slots))throw new Error(d.error||'Ungueltige NVS-Antwort');presetSlots=d.slots;const old=presetSelector.value;presetSelector.replaceChildren();d.slots.forEach((p,i)=>{const o=document.createElement('option');o.value=i;o.textContent=(i+1)+': '+(p.name||'(frei)');presetSelector.appendChild(o);});presetSelector.value=old&&Number(old)<d.slots.length?old:'0';showPresetSlot();}catch(e){presetStatus.textContent='NVS LESEN FEHLER: '+e;}}
+async function savePreset(){const slot=Number(presetSelector.value),name=presetName.value.trim(),command=presetCommand.value;if(!name||!command){presetStatus.textContent='Name und Befehl sind erforderlich.';return;}if(utf8Length(name)>64||utf8Length(command)>1024){presetStatus.textContent='Maximal 64 Name-Bytes und 1024 Befehls-Bytes.';return;}try{const r=await fetch('/uart/console/presets',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:new URLSearchParams({slot:String(slot),name,command})});if(!r.ok)throw new Error(await r.text());await loadPresets();presetStatus.textContent='Name und Befehl im NVS gespeichert.';}catch(e){presetStatus.textContent='SPEICHERN FEHLER: '+e;}}
+async function deletePreset(){const slot=Number(presetSelector.value);if(!confirm('Speicherplatz '+(slot+1)+' dauerhaft loeschen?'))return;try{const r=await fetch('/uart/console/presets/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:new URLSearchParams({slot:String(slot)})});if(!r.ok)throw new Error(await r.text());await loadPresets();presetStatus.textContent='Eintrag aus NVS geloescht.';}catch(e){presetStatus.textContent='LOESCHEN FEHLER: '+e;}}
+async function sendPreset(){const p=presetSlots[Number(presetSelector.value)];if(!p||!p.command)return;presetStatus.textContent='Sende '+p.name+' ...';const ok=await sendTextBlock(p.command);presetStatus.textContent=ok?'Befehl gesendet: '+p.name:'Senden fehlgeschlagen (siehe Konsolenstatus).';}
+presetSelector.addEventListener('change',showPresetSlot);
+loadPresets();
 function endingHex(){const v=document.getElementById('line_ending').value;return v==='cr'?'0D':v==='lf'?'0A':v==='crlf'?'0D0A':'';}
 function endingText(){const e=endingHex();return e==='0D'?String.fromCharCode(13):e==='0A'?String.fromCharCode(10):e==='0D0A'?String.fromCharCode(13,10):'';}
 function ingestHex(h){for(let i=0;i+1<h.length;i+=2)bytes.push(parseInt(h.substr(i,2),16));if(bytes.length>32768)bytes=bytes.slice(-32768);}
@@ -1117,6 +1159,42 @@ static void registerRoutes() {
     AsyncWebServerResponse* resp = r->beginResponse(200, "application/json; charset=utf-8", uartMonitor.consoleChunkJson(since));
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     r->send(resp);
+  });
+  server.on("/uart/console/presets", HTTP_GET, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
+    auto* resp = r->beginResponse(200, "application/json; charset=utf-8", uartPresetsJson());
+    resp->addHeader("Cache-Control", "no-store");
+    r->send(resp);
+  });
+  server.on("/uart/console/presets", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
+    if (!r->hasArg("slot") || !r->hasArg("name") || !r->hasArg("command")) { r->send(400, "text/plain", "slot, name und command erforderlich"); return; }
+    const String slotText = r->arg("slot");
+    if (slotText.length()!=1 || slotText[0]<'0' || slotText[0]>'7') { r->send(400, "text/plain", "Ungueltiger Speicherplatz"); return; }
+    const int slot = slotText.toInt();
+    String name = r->arg("name"); name.trim();
+    const String command = r->arg("command");
+    if (!name.length() || name.length()>64 || !command.length() || command.length()>1024 || name.indexOf('\n')>=0 || name.indexOf('\r')>=0 || command.indexOf('\0')>=0) {
+      r->send(400, "text/plain", "Name (1-64 Bytes) und Befehl (1-1024 Bytes) pruefen"); return;
+    }
+    Preferences p;
+    if (!p.begin("uartcmd", false)) { r->send(500, "text/plain", "NVS nicht verfuegbar"); return; }
+    const String nk=uartPresetKey('n',slot),ck=uartPresetKey('c',slot);
+    const bool okName=p.putString(nk.c_str(),name)==name.length();
+    const bool okCmd=p.putString(ck.c_str(),command)==command.length();
+    p.end();
+    r->send(okName&&okCmd?200:500, "text/plain", okName&&okCmd?"OK":"NVS Schreibfehler");
+  });
+  server.on("/uart/console/presets/delete", HTTP_POST, [](AsyncWebServerRequest* r){
+    if (rejectUnauthorizedPowerShell(r)) return;
+    if (!r->hasArg("slot")) { r->send(400,"text/plain","slot fehlt"); return; }
+    const String st=r->arg("slot");
+    if (st.length()!=1 || st[0]<'0' || st[0]>'7') { r->send(400,"text/plain","Ungueltiger Speicherplatz"); return; }
+    const int slot=st.toInt();
+    Preferences p;
+    if (!p.begin("uartcmd",false)) { r->send(500,"text/plain","NVS nicht verfuegbar"); return; }
+    p.remove(uartPresetKey('n',slot).c_str());p.remove(uartPresetKey('c',slot).c_str());p.end();
+    r->send(200,"text/plain","OK");
   });
   server.on("/uart/console/send", HTTP_POST, [](AsyncWebServerRequest* r){
     if (rejectUnauthorizedPowerShell(r)) return;

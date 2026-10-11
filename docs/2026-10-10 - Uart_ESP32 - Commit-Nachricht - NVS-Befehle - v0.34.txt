@@ -1,0 +1,19 @@
+BL_Add named UART command presets stored in NVS
+
+Date: 2026-10-10
+
+Summary:
+- Added eight named UART command presets persisted through ESP32 Preferences (NVS).
+- Added preset listing, saving, sending, and deleting in the UART web console.
+- Reused existing UART transmission and access controls.
+- Created project documentation in PDF and editable DOCX format.
+- Recorded verification limitations; ESP32 hardware and full firmware build are pending.
+- Preserved the original Uart_ESP32 root folder in the ZIP archives.
+
+Changed files:
+- src/main.cpp
+- VALIDATION_v0.34.txt
+- docs/2026-10-10 - Uart_ESP32 - Projektdokumentation - NVS-Befehle - v0.34.docx
+- docs/2026-10-10 - Uart_ESP32 - Projektdokumentation - NVS-Befehle - v0.34.pdf
+- docs/2026-10-10 - Uart_ESP32 - Projektdokumentation - NVS-Befehle - v0.34.md
+- docs/2026-10-10 - Uart_ESP32 - Commit-Nachricht - NVS-Befehle - v0.34.txt

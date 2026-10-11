@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Windows PowerShell client for Uart_Esp32 v0.33 and newer.
+  Windows PowerShell client for Uart_Esp32 v0.33 and newer (client fix v0.34).
 
 .DESCRIPTION
   Supports a one-time pairing handshake, an interactive UART terminal and
@@ -167,6 +167,13 @@ function Get-LineEndingBytes([string]$Mode) {
 
 function Show-Object($Object) { $Object | ConvertTo-Json -Depth 8 }
 
+function Get-OptionalProperty($Object, [string]$Name, $Default = $null) {
+  if ($null -eq $Object) { return $Default }
+  $prop = $Object.PSObject.Properties[$Name]
+  if ($null -eq $prop) { return $Default }
+  return $prop.Value
+}
+
 function Send-UartUploadChunk([byte[]]$Chunk, [Int64]$Offset) {
   $end = $Offset + $Chunk.Length
   $b64 = [Convert]::ToBase64String($Chunk)
@@ -321,12 +328,22 @@ function Invoke-InteractiveLocalCommand([string]$Line) {
     '/upload' {
       $local = if ($parts.Count -ge 2) { $parts[1] } else { '' }
       $remote = if ($parts.Count -ge 3) { $parts[2] } else { '' }
-      Start-UartUpload $local $remote $true | Out-Null
+      try {
+        Start-UartUpload $local $remote $true | Out-Null
+      } catch {
+        Write-Host ("`n[Upload-Fehler: {0}]" -f $_.Exception.Message)
+        Write-Host 'Die UART-Konsole bleibt verbunden. /upload erneut versuchen oder /help verwenden.'
+      }
     }
     '/download' {
       $remote = if ($parts.Count -ge 2) { $parts[1] } else { '' }
       $local = if ($parts.Count -ge 3) { $parts[2] } else { '' }
-      Start-UartDownload $remote $local 0 | Out-Null
+      try {
+        Start-UartDownload $remote $local 0 | Out-Null
+      } catch {
+        Write-Host ("`n[Download-Fehler: {0}]" -f $_.Exception.Message)
+        Write-Host 'Die UART-Konsole bleibt verbunden. /download erneut versuchen oder /help verwenden.'
+      }
     }
     '/exit' { return $false }
     default { Write-Host ("Unbekannter lokaler Befehl: {0}. /help zeigt die Befehle." -f $cmd) }
@@ -348,10 +365,17 @@ function Start-InteractiveConsole {
     while ($true) {
       try {
         $d = Invoke-UartGet ("/uart/console/data?since=$seq")
-        if ($d.truncated) { Write-Host "`n[UART-Puffer wurde zwischenzeitlich gekuerzt]" }
-        $text = Convert-HexToText ([string]$d.hex)
+        $wasTruncated = [bool](Get-OptionalProperty $d 'truncated' $false)
+        if ($wasTruncated) { Write-Host "`n[UART-Puffer wurde zwischenzeitlich gekuerzt]" }
+
+        $hexData = [string](Get-OptionalProperty $d 'hex' '')
+        $text = Convert-HexToText $hexData
         if ($text.Length -gt 0) { [Console]::Write($text) }
-        $seq = [int64]$d.sequence
+
+        $nextSequence = Get-OptionalProperty $d 'sequence' $seq
+        if ($null -ne $nextSequence -and [string]$nextSequence -match '^\d+$') {
+          $seq = [int64]$nextSequence
+        }
       } catch {
         Write-Host ("`n[Polling-Fehler: {0}]" -f $_.Exception.Message)
         Start-Sleep -Milliseconds 500
