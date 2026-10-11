@@ -1,0 +1,1 @@
+v0.39 source inspection: corrected String.indexOf NUL terminator check; JS syntax node --check OK. Example length 537 bytes. Hardware and PlatformIO compilation not performed.

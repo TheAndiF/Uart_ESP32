@@ -900,21 +900,25 @@ static String uartPresetsPage() {
   h += "<label>Name (max. 64 UTF-8-Bytes)</label><input id='preset_name' autocomplete='off' maxlength='64' placeholder='z. B. BX3 Status'>";
   h += "<label>Befehl / mehrzeiliger Kommandoblock (max. 1024 UTF-8-Bytes)</label><textarea id='preset_command' spellcheck='false' placeholder='uname -a'></textarea>";
   h += "<p class='small'>Enter fuegt eine neue Zeile ein. Nur die Schaltflaeche Senden startet die UART-Uebertragung.</p>";
+  h += "<p id='preset_diagnostic' class='small' aria-live='polite'>Name: 0 Bytes | Befehl: 0 Bytes | Zeilen: 1 | Validierung: Name fehlt, Befehl fehlt</p>";
   h += "<label>Zeilenabschluss beim Senden</label><select id='line_ending'><option value='cr' selected>CR (0x0D)</option><option value='lf'>LF (0x0A)</option><option value='crlf'>CRLF</option><option value='none'>Keiner (Zeilenwechsel als LF)</option></select>";
   h += "<button type='button' id='preset_save' onclick='savePreset()'>Im NVS speichern</button><button type='button' id='preset_send' onclick='sendPreset()'>Gespeicherten Befehl senden</button><button type='button' id='preset_delete' onclick='deletePreset()'>Befehl loeschen</button><p id='preset_status' class='small' aria-live='polite'></p></fieldset>";
   h += "<p class='small'>Der Befehl wird nach dem Speichern zur Kontrolle erneut aus NVS gelesen. Nicht gespeicherte Aenderungen werden nicht gesendet. Es erfolgt kein automatischer Versand nach einem Neustart. UART-TX muss in UART Einstellungen freigegeben sein.</p>";
   h += uartNav(); h += "<a class='btn' href='/'>Zurueck</a>";
   h += R"rawliteral(<script>
 const nameInput=document.getElementById('preset_name'),commandInput=document.getElementById('preset_command'),statusBox=document.getElementById('preset_status');
-const sendBtn=document.getElementById('preset_send'),saveBtn=document.getElementById('preset_save'),deleteBtn=document.getElementById('preset_delete');
+const sendBtn=document.getElementById('preset_send'),saveBtn=document.getElementById('preset_save'),deleteBtn=document.getElementById('preset_delete'),diagnostic=document.getElementById('preset_diagnostic');
 let preset={name:'',command:''},busy=false;
 function utf8Length(s){return new TextEncoder().encode(s).length;}
 function message(s){statusBox.textContent=s;}
-function displaySlot(){nameInput.value=preset.name;commandInput.value=preset.command;buttons();}
+function validation(){const name=nameInput.value,command=commandInput.value,nb=utf8Length(name),cb=utf8Length(command);let errors=[];if(nb<1)errors.push('Name fehlt');else if(nb>64)errors.push('Name zu lang');if(cb<1)errors.push('Befehl fehlt');else if(cb>1024)errors.push('Befehl zu lang');return {name,command,nb,cb,errors};}
+function updateDiagnostic(){const v=validation(),lines=v.command.split(/\r\n|\r|\n/).length;diagnostic.textContent='Name: '+v.nb+' / 64 Bytes | Befehl: '+v.cb+' / 1024 Bytes | Zeilen: '+lines+' | Validierung: '+(v.errors.length?v.errors.join(', '):'OK');}
+nameInput.addEventListener('input',updateDiagnostic);commandInput.addEventListener('input',updateDiagnostic);
+function displaySlot(){nameInput.value=preset.name;commandInput.value=preset.command;updateDiagnostic();buttons();}
 function buttons(){nameInput.disabled=busy;commandInput.disabled=busy;saveBtn.disabled=busy;deleteBtn.disabled=busy||(!preset.name&&!preset.command);sendBtn.disabled=busy||!preset.command;}
 async function loadPresets(){const r=await fetch('/uart/console/presets',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());const d=await r.json();if(typeof d.name!=='string'||typeof d.command!=='string')throw new Error(d.error||'Ungueltige NVS-Daten');preset=d;displaySlot();}
 async function post(url,data){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:new URLSearchParams(data)});if(!r.ok)throw new Error(await r.text());return r;}
-async function savePreset(){if(busy)return;const name=nameInput.value.trim(),command=commandInput.value;if(!name||!command){message('Name und Befehl sind erforderlich.');return;}if(utf8Length(name)>64||utf8Length(command)>1024){message('Maximal 64 Name-Bytes und 1024 Befehls-Bytes (UTF-8).');return;}busy=true;buttons();try{await post('/uart/console/presets',{name,command});await loadPresets();if(preset.name!==name||preset.command!==command)throw new Error('NVS-Lesekontrolle fehlgeschlagen');message('Gespeichert und aus NVS unveraendert zurueckgelesen.');}catch(e){message('SPEICHERN FEHLER: '+e);}finally{busy=false;buttons();}}
+async function savePreset(){if(busy)return;const v=validation();updateDiagnostic();if(v.errors.length){message('SPEICHERN FEHLER: '+v.errors.join(', ')+' (Name '+v.nb+' Bytes; Befehl '+v.cb+' Bytes)');return;}busy=true;buttons();try{await post('/uart/console/presets',{name:v.name,command:v.command});await loadPresets();if(preset.name!==v.name||preset.command!==v.command)throw new Error('NVS-Lesekontrolle fehlgeschlagen');message('Gespeichert und aus NVS unveraendert zurueckgelesen ('+v.cb+' Bytes).');}catch(e){message('SPEICHERN FEHLER: '+e);}finally{busy=false;buttons();}}
 async function deletePreset(){if(busy)return;if(!confirm('Gespeicherten Befehl dauerhaft loeschen?'))return;busy=true;buttons();try{await post('/uart/console/presets/delete',{});await loadPresets();if(preset.name||preset.command)throw new Error('NVS-Eintrag nach Loeschen noch vorhanden');message('Befehl geloescht und kontrolliert.');}catch(e){message('LOESCHEN FEHLER: '+e);}finally{busy=false;buttons();}}
 function splitUtf8(s,max){const chunks=[];let part='';for(const ch of s){if(part&&utf8Length(part+ch)>max){chunks.push(part);part='';}part+=ch;}if(part)chunks.push(part);return chunks;}
 function buildChunks(command){const raw=command.replace(/\r\n/g,'\n').replace(/\r/g,'\n'),mode=document.getElementById('line_ending').value,eol=mode==='cr'?'\r':mode==='crlf'?'\r\n':'\n';const lines=raw.split('\n');let chunks=[];lines.forEach((line,i)=>{const part=line+(i<lines.length-1?eol:(raw.endsWith('\n')?'':mode==='none'?'':eol));chunks.push(...splitUtf8(part,480));});return chunks;}
@@ -1262,11 +1266,16 @@ static void registerRoutes() {
   server.on("/uart/console/presets", HTTP_POST, [](AsyncWebServerRequest* r){
     if (rejectUnauthorizedPowerShell(r)) return;
     if (!r->hasArg("name") || !r->hasArg("command")) { r->send(400, "text/plain", "name und command erforderlich"); return; }
-    String name = r->arg("name"); name.trim();
+    // Keep the exact UTF-8 bytes received from the browser: no trim, escaping or newline conversion.
+    const String name = r->arg("name");
     const String command = r->arg("command");
-    if (!name.length() || name.length()>UART_PRESET_MAX_NAME || !command.length() || command.length()>UART_PRESET_MAX_COMMAND || name.indexOf('\n')>=0 || name.indexOf('\r')>=0 || name.indexOf('\0')>=0 || command.indexOf('\0')>=0) {
-      r->send(400, "text/plain", "Name (1-64 Bytes) und Befehl (1-1024 Bytes) pruefen"); return;
-    }
+    // Arduino String::length() counts bytes, unlike JavaScript's UTF-16 .length.
+    if (!name.length()) { r->send(400, "text/plain", "Name fehlt (0 Bytes; erlaubt 1-64)"); return; }
+    if (name.length() > UART_PRESET_MAX_NAME) { r->send(400, "text/plain", "Name zu lang (maximal 64 UTF-8-Bytes)"); return; }
+    if (!command.length()) { r->send(400, "text/plain", "Befehl fehlt (0 Bytes; erlaubt 1-1024)"); return; }
+    if (command.length() > UART_PRESET_MAX_COMMAND) { r->send(400, "text/plain", "Befehl zu lang (maximal 1024 UTF-8-Bytes)"); return; }
+    // Do NOT use String::indexOf('\0'): its C-string search can find the terminator
+    // at the end of every valid string, rejecting otherwise valid shell commands.
     uint8_t blob[UART_PRESET_BLOB_MAX];
     const size_t length=2+name.length()+command.length();
     blob[0]=1; blob[1]=(uint8_t)name.length();

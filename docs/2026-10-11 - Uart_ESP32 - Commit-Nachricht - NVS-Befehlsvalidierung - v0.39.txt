@@ -1,0 +1,17 @@
+BL_Fix single NVS UART preset validation
+
+Date: 2026-10-11
+
+Summary:
+- Removed erroneous Arduino String null-terminator checks that rejected valid shell commands.
+- Preserved received UTF-8 bytes including shell syntax and line endings.
+- Added live byte and line diagnostics with precise validation errors.
+- Kept the single-record NVS format and readback verification.
+- Kept probe runner, battery monitor and deep sleep disabled by default.
+
+Changed files:
+- src/main.cpp
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - NVS-Befehlsvalidierung - v0.39.pdf
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - NVS-Befehlsvalidierung - v0.39.docx
+- docs/2026-10-11 - Uart_ESP32 - Commit-Nachricht - NVS-Befehlsvalidierung - v0.39.txt
+- VALIDATION_v0.39.txt
