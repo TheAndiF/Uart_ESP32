@@ -1,3 +1,5 @@
+#include "FeatureFlags.h"
+#if UART_BATTERY_ENABLED
 #include "BatteryMonitor.h"
 #include "ConfigDefaults.h"
 #include <time.h>
@@ -78,3 +80,5 @@ bool BatteryMonitor::measure(const String& src) {
   status = valid ? "ok" : "Messwert unplausibel";
   return valid;
 }
+
+#endif

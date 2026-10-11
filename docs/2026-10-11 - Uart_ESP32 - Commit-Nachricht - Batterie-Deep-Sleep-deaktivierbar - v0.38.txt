@@ -1,0 +1,20 @@
+BL_Add compile-time switches for battery and deep sleep
+
+Date: 2026-10-11
+
+Summary:
+- Added independent battery/ADC and deep sleep compile-time switches, both disabled by default.
+- Excluded disabled feature pages, API endpoints, MQTT commands, periodic jobs and C++ implementations.
+- Retained UART, OTA, and the existing probe-runner feature flag behavior.
+- Allowed deep sleep to run without the battery monitor using an unavailable voltage value.
+- Preserved existing NVS contents and the partition layout.
+- Updated project documentation for v0.38.
+
+Changed files:
+- src/FeatureFlags.h
+- src/main.cpp
+- src/BatteryMonitor.cpp
+- src/DeepSleepManager.cpp
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Batterie-Deep-Sleep-deaktivierbar - v0.38.docx
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Batterie-Deep-Sleep-deaktivierbar - v0.38.pdf
+- docs/2026-10-11 - Uart_ESP32 - Commit-Nachricht - Batterie-Deep-Sleep-deaktivierbar - v0.38.txt

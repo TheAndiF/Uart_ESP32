@@ -1,3 +1,4 @@
+#include "FeatureFlags.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -8,22 +9,30 @@
 #include <new>
 
 #include "MqttManager.h"
+#if UART_DEEP_SLEEP_ENABLED
 #include "DeepSleepManager.h"
+#endif
 #include "OtaManager.h"
+#if UART_BATTERY_ENABLED
 #include "BatteryMonitor.h"
+#endif
 #include "UartManager.h"
 #include "ConfigDefaults.h"
 
 static const char* FW_NAME = "Uart_Esp32";
-static const char* FW_BUILD_VERSION = "v0.34";
+static const char* FW_BUILD_VERSION = "v0.38";
 static const char* TZ_CET_CEST = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 AsyncWebServer server(80);
 WiFiClient wifiClient;
 MqttManager mqtt;
+#if UART_DEEP_SLEEP_ENABLED
 DeepSleepManager deepSleep;
+#endif
 OtaManager ota;
+#if UART_BATTERY_ENABLED
 BatteryMonitor battery;
+#endif
 UartManager uartMonitor;
 Preferences otaPrefs;
 
@@ -56,7 +65,9 @@ unsigned long apShutdownAt = 0;
 unsigned long lastWifiTry = 0;
 unsigned long lastMqttTry = 0;
 unsigned long lastHeartbeat = 0;
+#if UART_BATTERY_ENABLED
 unsigned long lastBattery = 0;
+#endif
 
 static String chipId() {
   uint64_t mac = ESP.getEfuseMac();
@@ -173,7 +184,9 @@ static String uartNav() {
   h += "<a class='btn' href='/uart/console'>UART Konsole</a>";
   h += "<a class='btn' href='/uart/presets'>Gespeicherte Befehle</a>";
   h += "<a class='btn' href='/uart/decoder'>UART Decoder</a>";
+#if UART_PROBE_RUNNER_ENABLED
   h += "<a class='btn' href='/uart/probe'>UART Probe-Runner</a>";
+#endif
   h += "<a class='btn' href='/uart/image'>UART Datei-Download</a>";
   h += "<a class='btn' href='/uart/upload'>UART Datei-Upload</a>";
   return h;
@@ -558,6 +571,7 @@ static void configureTime() {
   if (ntpServer.length()) configTime(0, 0, ntpServer.c_str());
 }
 
+#if UART_BATTERY_ENABLED
 static void publishBattery(bool retained = false) {
   if (!mqtt.isConnected()) return;
   String b = mqttTopicBase + "/battery/";
@@ -571,7 +585,10 @@ static void publishBattery(bool retained = false) {
   }
   mqtt.publish(b + "time", battery.timestamp, false);
 }
+#endif
 
+
+#if UART_DEEP_SLEEP_ENABLED
 static void publishSleepStatus() {
   if (!mqtt.isConnected()) return;
   String b = mqttTopicBase + "/sleep/";
@@ -583,6 +600,8 @@ static void publishSleepStatus() {
   mqtt.publish(b + "next_wakeup_text", deepSleep.nextWakeupText(), true);
   mqtt.publish(b + "settings_json", deepSleep.settingsJson(), true);
 }
+#endif
+
 
 static void publishUartStatus() {
   if (!mqtt.isConnected()) return;
@@ -631,20 +650,31 @@ static void publishHeartbeat() {
   mqtt.publish(b + "uart_mode", uartMonitor.modeText(), true);
   mqtt.publish(b + "uart_bytes", String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)), false);
   publishUartStatus();
+#if UART_BATTERY_ENABLED
   publishBattery(false);
+#endif
+#if UART_DEEP_SLEEP_ENABLED
   publishSleepStatus();
+#endif
   lastHeartbeat = millis();
 }
 
+#if UART_DEEP_SLEEP_ENABLED
 static void beforeSleep(const String& reason) {
+#if UART_BATTERY_ENABLED
   battery.measure("before_sleep");
+#endif
   if (mqtt.isConnected()) {
     mqtt.publish(mqttTopicBase + "/sleep/state", "sleeping", false);
     mqtt.publish(mqttTopicBase + "/sleep/reason", reason, false);
+#if UART_BATTERY_ENABLED
     publishBattery(false);
+#endif
     publishSleepStatus();
   }
 }
+#endif
+
 
 static void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String full(topic), body;
@@ -660,10 +690,13 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     heartbeatMs = seconds * 1000U; saveMqttSettings();
   } else if (cmd == "status/get" || cmd == "get") {
     publishHeartbeat();
+#if UART_BATTERY_ENABLED
   } else if (cmd == "battery/measure") {
     battery.measure("mqtt"); publishBattery(false);
+#endif
   } else if (cmd == "reboot") {
     mqtt.publish(mqttTopicBase + "/event/last_command", "reboot", false); delay(150); ESP.restart();
+#if UART_DEEP_SLEEP_ENABLED
   } else if (cmd == "sleep/get") {
     publishSleepStatus();
   } else if (cmd.startsWith("sleep/")) {
@@ -671,6 +704,7 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (sub == "now") mqtt.publish(mqttTopicBase + "/event/last_command", "sleep/now", false);
     handled = deepSleep.handleMqttCommand(sub, body);
     if (handled && sub != "now") publishSleepStatus();
+#endif
   } else handled = false;
 
   if (handled && cmd != "reboot" && cmd != "sleep/now") {
@@ -692,12 +726,25 @@ static String mainPage() {
   if (apActive) h += "<p><b>Fallback-AP:</b> " + htmlEscape(apSsid) + " / " + WiFi.softAPIP().toString() + "</p>";
   h += "<p><b>Reconnects:</b> " + String(wifiReconnectCount) + " &nbsp; <b>Fehler:</b> " + String(wifiFailureCount) + "</p></fieldset>";
   h += "<fieldset><legend>MQTT</legend><p><b>Status:</b> " + mqtt.getLastStatus() + "</p><p class='mono'><b>Basis:</b> " + htmlEscape(mqttTopicBase) + "</p></fieldset>";
+#if UART_BATTERY_ENABLED
   h += "<fieldset><legend>Batterie fuer Deep Sleep</legend><p><b>Status:</b> " + battery.status + "</p>";
   if (battery.valid) h += "<p><b>Spannung:</b> " + String(battery.voltage,3) + " V</p>";
   h += "</fieldset>";
+#endif
+
+#if UART_DEEP_SLEEP_ENABLED
   h += "<fieldset><legend>Deep Sleep</legend><p><b>Aktiv:</b> " + String(deepSleep.isEnabled()?"ja":"nein") + "</p><p><b>Modus:</b> " + deepSleep.wakeupMode() + "</p><p><b>Naechster Wakeup:</b> " + deepSleep.nextWakeupText() + "</p></fieldset>";
+#endif
+
   h += "<fieldset><legend>UART</legend><p><b>Basisbetrieb:</b> " + String(uartMonitor.enabled()?"aktiviert":"deaktiviert") + "</p><p><b>Status:</b> " + htmlEscape(uartMonitor.status()) + "</p><p><b>TX:</b> " + htmlEscape(uartMonitor.txOwnerText()) + "</p><p><b>Empfangene Bytes:</b> " + String((unsigned long)(uartMonitor.totalBytes() & 0xFFFFFFFFULL)) + "</p></fieldset>";
-  h += uartNav(); h += "<a class='btn' href='/network'>WLAN / NTP</a><a class='btn' href='/mqtt'>MQTT</a><a class='btn' href='/battery'>Batterie / ADC</a><a class='btn' href='/deepsleep'>Deep Sleep</a><a class='btn' href='/ota'>OTA Update</a>";
+  h += uartNav(); h += "<a class='btn' href='/network'>WLAN / NTP</a><a class='btn' href='/mqtt'>MQTT</a>";
+#if UART_BATTERY_ENABLED
+  h += "<a class='btn' href='/battery'>Batterie / ADC</a>";
+#endif
+#if UART_DEEP_SLEEP_ENABLED
+  h += "<a class='btn' href='/deepsleep'>Deep Sleep</a>";
+#endif
+  h += "<a class='btn' href='/ota'>OTA Update</a>";
   h += "<form method='post' action='/reboot'><button type='submit'>ESP32 neu starten</button></form></div></body></html>";
   return h;
 }
@@ -1035,6 +1082,7 @@ setInterval(pollUpload,500);pollUpload();
   return h;
 }
 
+#if UART_PROBE_RUNNER_ENABLED
 static String uartProbeRunnerPage() {
   String h = pageHead("UART Probe-Runner");
   h += "<h1>UART Probe-Runner</h1>";
@@ -1054,6 +1102,8 @@ setInterval(updateProbe,500);updateProbe();
   h += "</div></body></html>";
   return h;
 }
+
+#endif
 
 static String uartSettingsPage() {
   String h = pageHead("UART Einstellungen");
@@ -1090,6 +1140,7 @@ static String mqttPage() {
   h += "<form method='post' action='/test_mqtt'><button type='submit'>Verbindung testen</button></form><p><b>Status:</b> "+mqtt.getLastStatus()+"</p><a class='btn' href='/'>Zurueck</a></div></body></html>"; return h;
 }
 
+#if UART_BATTERY_ENABLED
 static String batteryPage() {
   String h=pageHead("Batterie / ADC"); h += "<h1>Batterie / ADC</h1><p>Nur fuer batterieabhaengigen Deep Sleep. Beim ESP32-WROOM werden bewusst nur ADC1 GPIO32..39 zugelassen.</p><form method='post' action='/save_battery'>";
   h += "<label>Messung aktiv</label><select name='enabled'><option value='0'"+String(battery.enabled?"":" selected")+">AUS</option><option value='1'"+String(battery.enabled?" selected":"")+">EIN</option></select>";
@@ -1098,6 +1149,8 @@ static String batteryPage() {
   if (battery.valid) h += "<p><b>Batterie:</b> "+String(battery.voltage,3)+" V &nbsp; <b>ADC:</b> "+String(battery.adcVoltage,3)+" V</p>";
   h += "<a class='btn' href='/'>Zurueck</a></div></body></html>"; return h;
 }
+#endif
+
 
 static void registerRoutes() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",mainPage()); });
@@ -1434,6 +1487,7 @@ static void registerRoutes() {
     resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate"); r->send(resp);
   });
 
+#if UART_PROBE_RUNNER_ENABLED
   // Probe actions must be registered before the /uart/probe page itself.
   server.on("/uart/probe/start_hit", HTTP_POST, [](AsyncWebServerRequest* r){
     if (!uartMonitor.startProbeSweep(true)) {
@@ -1456,10 +1510,11 @@ static void registerRoutes() {
     r->send(resp);
   });
 
+#endif
   server.on("/uart/start", HTTP_POST, [](AsyncWebServerRequest* r){
     if (rejectUnauthorizedPowerShell(r)) return;
     const String ret = r->hasArg("return") ? r->arg("return") : String("settings");
-    const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "probe" ? "/uart/probe" : ret == "image" ? "/uart/image" : "/uart/settings";
+    const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "image" ? "/uart/image" : "/uart/settings";
     if (!uartMonitor.start()) {
       r->send(400, "text/html; charset=utf-8", pageHead("UART Startfehler") + "<h1>UART konnte nicht gestartet werden</h1><p>" + htmlEscape(uartMonitor.status()) + "</p><a class='btn' href='/uart/settings'>UART Einstellungen</a></div></body></html>");
       return;
@@ -1469,7 +1524,7 @@ static void registerRoutes() {
   server.on("/uart/stop", HTTP_POST, [](AsyncWebServerRequest* r){
     if (rejectUnauthorizedPowerShell(r)) return;
     const String ret = r->hasArg("return") ? r->arg("return") : String("settings");
-    const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "probe" ? "/uart/probe" : ret == "image" ? "/uart/image" : "/uart/settings";
+    const char* target = ret == "console" ? "/uart/console" : ret == "decoder" ? "/uart/decoder" : ret == "image" ? "/uart/image" : "/uart/settings";
     uartMonitor.stop();
     r->redirect(target);
   });
@@ -1533,15 +1588,20 @@ static void registerRoutes() {
     saveMqttSettings(); mqtt.disconnect(); mqtt.configure(mqttHost,mqttPort,mqttUser,mqttPassword,mqttTopicBase,mqttClientId,mqttEnabled); r->redirect("/mqtt");
   });
   server.on("/test_mqtt", HTTP_POST, [](AsyncWebServerRequest* r){ bool ok=mqtt.tryConnectOnce(); r->send(200,"text/html; charset=utf-8",pageHead("MQTT Test")+"<h1>MQTT Test</h1><p>"+String(ok?"Verbindung OK":"Verbindung fehlgeschlagen")+"</p><p>"+mqtt.getLastStatus()+"</p><a class='btn' href='/mqtt'>Zurueck</a></div></body></html>"); });
+#if UART_BATTERY_ENABLED
   server.on("/battery", HTTP_GET, [](AsyncWebServerRequest* r){ r->send(200,"text/html; charset=utf-8",batteryPage()); });
   server.on("/save_battery", HTTP_POST, [](AsyncWebServerRequest* r){
     if(r->hasArg("enabled")) battery.enabled=r->arg("enabled").toInt(); if(r->hasArg("pin")) battery.adcPin=r->arg("pin").toInt(); if(r->hasArg("r1")) battery.r1=r->arg("r1").toFloat(); if(r->hasArg("r2")) battery.r2=r->arg("r2").toFloat(); if(r->hasArg("cal")) battery.calibration=r->arg("cal").toFloat(); if(r->hasArg("samples")) battery.samples=r->arg("samples").toInt();
     if(!battery.isValidAdc1Pin()) battery.adcPin=34; if(battery.r1<1) battery.r1=100000; if(battery.r2<1) battery.r2=33000; if(battery.samples<1) battery.samples=1; if(battery.samples>200) battery.samples=200; battery.save(); battery.begin(); battery.measure("web_save"); r->redirect("/battery");
   });
   server.on("/measure_battery", HTTP_POST, [](AsyncWebServerRequest* r){ battery.measure("web"); publishBattery(false); r->redirect("/battery"); });
+#endif
+
   server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest* r){ r->send(200,"text/plain","Neustart"); delay(250); ESP.restart(); });
   server.onNotFound([](AsyncWebServerRequest* r){ r->send(404,"text/plain","404 - nicht gefunden"); });
+#if UART_DEEP_SLEEP_ENABLED
   deepSleep.registerRoutes(server);
+#endif
   ota.registerRoutes(server);
 }
 
@@ -1551,9 +1611,13 @@ void setup() {
   Serial.printf("[BOOT] Build: %s %s\n", __DATE__, __TIME__);
   Serial.printf("[BOOT] Resetgrund: %s (%d)\n", resetReasonText().c_str(), (int)esp_reset_reason());
   loadSettings();
+#if UART_BATTERY_ENABLED
   battery.load(); battery.begin(); battery.measure("boot");
+#endif
   uartMonitor.begin();
+#if UART_DEEP_SLEEP_ENABLED
   deepSleep.begin(); deepSleep.setBeforeSleepCallback(beforeSleep);
+#endif
   ota.begin(otaPrefs);
 
   connectWifiInitial();
@@ -1578,9 +1642,17 @@ void loop() {
   if (mqttEnabled && millis()-lastMqttTry >= 5000UL) {
     lastMqttTry=millis(); bool was=mqtt.isConnected(); mqtt.connectIfNeeded(); if(!was && mqtt.isConnected()) publishHeartbeat();
   }
+#if UART_BATTERY_ENABLED
   if (millis()-lastBattery >= 60000UL) { lastBattery=millis(); battery.measure("periodic"); }
+#endif
   if (mqttEnabled && (millis()-lastHeartbeat >= heartbeatMs)) publishHeartbeat();
 
+#if UART_DEEP_SLEEP_ENABLED
+#if UART_BATTERY_ENABLED
   deepSleep.loop(mqtt.isConnected(), battery.valid ? battery.voltage : NAN);
+#else
+  deepSleep.loop(mqtt.isConnected(), NAN);
+#endif
+#endif
   delay(2);
 }

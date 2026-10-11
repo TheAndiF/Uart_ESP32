@@ -1,3 +1,5 @@
+#include "FeatureFlags.h"
+#if UART_DEEP_SLEEP_ENABLED
 #include "DeepSleepManager.h"
 #include "ConfigDefaults.h"
 #include <Preferences.h>
@@ -450,3 +452,5 @@ void DeepSleepManager::registerRoutes(AsyncWebServer& server) {
   server.on("/savedeep_sleep", HTTP_POST, [this](AsyncWebServerRequest* r){ saveFromRequest(r); r->redirect("/deepsleep"); });
   server.on("/sleep_now", HTTP_POST, [this](AsyncWebServerRequest* r){ r->send(200,"text/plain","Deep Sleep startet"); delay(250); sleepNow("Web sleep_now"); });
 }
+
+#endif
