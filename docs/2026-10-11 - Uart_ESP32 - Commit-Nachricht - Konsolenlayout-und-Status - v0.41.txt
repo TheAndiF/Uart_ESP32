@@ -1,0 +1,16 @@
+BL_Reorganize UART console and compact status panel
+
+Date: 2026-10-11
+
+Summary:
+- Moved terminal display to the first section of the UART console.
+- Grouped manual input separately below the terminal.
+- Positioned the stored NVS command controls below manual input.
+- Condensed the status panel while retaining live counters and collapsible polling diagnostics.
+- Preserved the existing input IDs, JavaScript logic, NVS routines, and UART endpoints.
+
+Changed files:
+- src/main.cpp
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Konsolenlayout-und-Status - v0.41.docx
+- docs/2026-10-11 - Uart_ESP32 - Projektdokumentation - Konsolenlayout-und-Status - v0.41.pdf
+- docs/2026-10-11 - Uart_ESP32 - Commit-Nachricht - Konsolenlayout-und-Status - v0.41.txt
