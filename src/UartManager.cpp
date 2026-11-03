@@ -1,7 +1,33 @@
 #include "UartManager.h"
 #include <math.h>
 #include <mbedtls/base64.h>
+#include <mbedtls/version.h>
 #include <new>
+
+// mbedTLS 3 removed the _ret suffix; mbedTLS 2 still uses those names.
+static int imageShaStarts(mbedtls_sha256_context* ctx) {
+#if MBEDTLS_VERSION_MAJOR >= 3
+  return mbedtls_sha256_starts(ctx, 0);
+#else
+  return mbedtls_sha256_starts_ret(ctx, 0);
+#endif
+}
+
+static int imageShaUpdate(mbedtls_sha256_context* ctx, const unsigned char* data, size_t len) {
+#if MBEDTLS_VERSION_MAJOR >= 3
+  return mbedtls_sha256_update(ctx, data, len);
+#else
+  return mbedtls_sha256_update_ret(ctx, data, len);
+#endif
+}
+
+static int imageShaFinish(mbedtls_sha256_context* ctx, unsigned char hash[32]) {
+#if MBEDTLS_VERSION_MAJOR >= 3
+  return mbedtls_sha256_finish(ctx, hash);
+#else
+  return mbedtls_sha256_finish_ret(ctx, hash);
+#endif
+}
 
 static bool prefHas(Preferences& p, const char* key) { return p.isKey(key); }
 
@@ -1202,7 +1228,7 @@ bool UartManager::startImageTransfer(const String& source, uint32_t startBlock) 
 
   mbedtls_sha256_init(&_imageSha);
   if (_imageOverallVerify) {
-    if (mbedtls_sha256_starts_ret(&_imageSha, 0) != 0) {
+    if (imageShaStarts(&_imageSha) != 0) {
       _imageState = ImageState::Error;
       _imageStatus = "SHA256 konnte nicht initialisiert werden";
       return false;
@@ -1489,7 +1515,7 @@ bool UartManager::imageAcknowledgeBlock(uint32_t blockNumber) {
   if (_imageLastAckedBlock != 0xFFFFFFFFUL && blockNumber == _imageLastAckedBlock) return true;
   if (_imageState != ImageState::BlockReady || _imageReadyBlock == 0xFFFFFFFFUL || blockNumber != _imageReadyBlock) return false;
   if (_imageOverallVerify && _imageShaStarted) {
-    if (mbedtls_sha256_update_ret(&_imageSha, _imageBlock, _imageBlockLength) != 0) {
+    if (imageShaUpdate(&_imageSha, _imageBlock, _imageBlockLength) != 0) {
       abortImageTransfer("Gesamt-SHA256 Update fehlgeschlagen");
       return false;
     }
@@ -1519,7 +1545,7 @@ void UartManager::finishImageSha() {
   bool ok = true;
   if (_imageOverallVerify && _imageShaStarted) {
     unsigned char hash[32];
-    if (mbedtls_sha256_finish_ret(&_imageSha, hash) != 0) ok = false;
+    if (imageShaFinish(&_imageSha, hash) != 0) ok = false;
     else shaHex(hash, _imageLocalTotalSha);
     mbedtls_sha256_free(&_imageSha);
     _imageShaStarted = false;
