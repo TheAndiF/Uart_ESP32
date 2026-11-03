@@ -1,0 +1,13 @@
+{
+  "name": "UART_ESP32",
+  "version": "GitHub main",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware/uart_esp32_full.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

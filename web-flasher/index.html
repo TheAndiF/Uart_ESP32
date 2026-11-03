@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>UART_ESP32 – Firmware installieren</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    body{margin:0;background:#f4f6fa;color:#1b2735;font:16px/1.55 system-ui,Arial,sans-serif}
+    main{max-width:660px;margin:8vh auto;padding:32px;background:#fff;border-radius:16px;box-shadow:0 8px 32px #132b4819}
+    h1{margin-top:0}ol{padding-left:24px}li{margin:12px 0}
+    .warn{background:#fff3d7;border-left:4px solid #dd9800;padding:14px;border-radius:5px}
+    esp-web-install-button{display:block;margin:24px 0}
+    a{color:#1663b4}
+  </style>
+</head>
+<body>
+<main>
+  <h1>UART_ESP32 per USB installieren</h1>
+  <p>Die Firmware wird direkt aus dieser Webseite auf den angeschlossenen ESP32 übertragen. Eine lokale Entwicklungsumgebung ist nicht nötig.</p>
+  <ol>
+    <li>ESP32 mit einem Daten-USB-Kabel an den Computer anschließen.</li>
+    <li>Diese Seite in <strong>Chrome</strong> oder <strong>Edge</strong> auf dem Desktop öffnen.</li>
+    <li>Auf <strong>Verbinden</strong> klicken, den seriellen Anschluss auswählen und die Installation bestätigen.</li>
+  </ol>
+  <p class="warn"><strong>Achtung:</strong> Das vollständige USB-Image schreibt auch Bootloader und Partitionstabelle. Dabei können bestehende Geräteeinstellungen verloren gehen. Vorher die Konfiguration sichern. Nur für den klassischen ESP32 (Board: nodemcu-32s), nicht ESP32-S3/C3.</p>
+  <esp-web-install-button manifest="manifest.json">
+    <button slot="activate">ESP32 verbinden und Firmware installieren</button>
+    <span slot="unsupported">Dein Browser unterstützt Web Serial nicht. Bitte Chrome oder Edge am Computer verwenden.</span>
+  </esp-web-install-button>
+  <p>Bei Verbindungsproblemen andere Programme mit geöffnetem COM-Port schließen. Gegebenenfalls BOOT während des Verbindens gedrückt halten.</p>
+  <p><a href="https://github.com/TheAndiF/Uart_ESP32">Zum GitHub-Projekt</a></p>
+</main>
+</body>
+</html>

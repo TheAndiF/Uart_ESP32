@@ -4,6 +4,14 @@
 
 Mit dem ESP32 lassen sich serielle Daten im Browser anzeigen, Befehle senden und – bei kompatiblen Zielgeräten – Dateien übertragen. Hinzu kommen WLAN-Konfiguration, MQTT-Status, OTA-Updates und Energiemanagement. Entwickelt wurde die Firmware insbesondere für einen **Marstek-BX3-Anwendungsfall**; viele UART-Grundfunktionen eignen sich auch für andere Geräte mit 3,3-V-TTL-UART.
 
+### Erstinstallation per USB direkt im Browser
+
+Die GitHub-Pages-Installationsseite unter `web-flasher/` ermöglicht das Flashen eines klassischen ESP32 (`nodemcu-32s`) über USB und einen Web-Serial-fähigen Desktop-Browser. Der Workflow `.github/workflows/web-flasher.yml` baut dafür bei Änderungen an `main` die Firmware und veröffentlicht die Seite samt vollständigem Flash-Image.
+
+**Einrichtung:** Unter *Repository → Settings → Pages → Build and deployment* als Quelle **GitHub Actions** auswählen. Nach erfolgreichem Workflow ist der Installer unter `https://theandif.github.io/Uart_ESP32/` erreichbar. ESP32 per USB-Datenkabel anschließen, Chrome oder Edge öffnen und den Installationsknopf verwenden. Dieser Weg erfordert kein lokales PlatformIO.
+
+**Wichtig:** Die USB-Erstinstallation schreibt ein vollständiges Image mit Bootloader und Partitionstabelle. Bestehende Geräteeinstellungen vorher sichern; bei vollständiger Neuinstallation oder geänderter Partitionierung können sie verloren gehen. Für spätere Aktualisierungen bei unveränderter Partitionierung bevorzugt das bereits vorhandene Browser-OTA unter `http://<ESP-IP>/ota` verwenden. Dieser Installer ist nicht für ESP32-C3/S3 gedacht.
+
 > **Projektstatus:** Aktives, hardwarenahes Entwicklungsprojekt. Einige Funktionen (insbesondere BX3-Protokolldecoder, Probe-Runner und Shell-basierte Dateiübertragung) sind gerätespezifisch. Vor dem Anschluss bitte Kompatibilität und Sicherheitshinweise prüfen.
 
 **[English README](README.md)** · [Schnellstart](#schnellstart) · [Funktionen](#funktionen) · [Technischer Leitfaden](docs/README_technical_history.md) · [Projektdokumente](docs/)

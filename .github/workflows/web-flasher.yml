@@ -1,0 +1,49 @@
+name: Build and publish USB web flasher
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO and esptool
+        run: python -m pip install platformio esptool
+      - name: Build ESP32 firmware
+        run: pio run -e uart_esp32_usb
+      - name: Produce complete flash image
+        run: |
+          mkdir -p web-flasher/firmware
+          BOOT_APP0="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+          test -f "$BOOT_APP0"
+          python -m esptool --chip esp32 merge-bin \
+            --flash-mode dio --flash-freq 40m --flash-size 4MB \
+            -o web-flasher/firmware/uart_esp32_full.bin \
+            0x1000 .pio/build/uart_esp32_usb/bootloader.bin \
+            0x8000 .pio/build/uart_esp32_usb/partitions.bin \
+            0xe000 "$BOOT_APP0" \
+            0x10000 .pio/build/uart_esp32_usb/firmware.bin
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web-flasher
+      - id: deployment
+        uses: actions/deploy-pages@v4
