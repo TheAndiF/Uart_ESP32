@@ -11,3 +11,4 @@
 arduino_secrets.h
 .env
 secrets.ini
+/.vscode/settings.json
